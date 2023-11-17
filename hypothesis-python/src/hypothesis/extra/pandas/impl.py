@@ -35,13 +35,9 @@ from hypothesis.strategies._internal.strategies import Ex, check_strategy
 from hypothesis.strategies._internal.utils import cacheable, defines_strategy
 
 try:
-    from pandas.api.types import is_categorical_dtype
+    from pandas.core.arrays.integer import IntegerDtype
 except ImportError:
-
-    def is_categorical_dtype(dt):
-        if isinstance(dt, np.dtype):
-            return False
-        return dt == "category"
+    IntegerDtype = ()
 
 
 def dtype_for_elements_strategy(s):
@@ -73,43 +69,68 @@ def elements_and_dtype(elements, dtype, source=None):
                     f"At least one of {prefix}elements or {prefix}dtype must be provided."
                 )
 
-    with check("is_categorical_dtype"):
-        if is_categorical_dtype(dtype):
+    with check("isinstance(dtype, CategoricalDtype)"):
+        if pandas.api.types.CategoricalDtype.is_dtype(dtype):
             raise InvalidArgument(
                 f"{prefix}dtype is categorical, which is currently unsupported"
             )
 
+    if isinstance(dtype, type) and issubclass(dtype, IntegerDtype):
+        raise InvalidArgument(
+            f"Passed {dtype=} is a dtype class, please pass in an instance of this class."
+            "Otherwise it would be treated as dtype=object"
+        )
+
     if isinstance(dtype, type) and np.dtype(dtype).kind == "O" and dtype is not object:
+        err_msg = f"Passed {dtype=} is not a valid Pandas dtype."
+        if issubclass(dtype, datetime):
+            err_msg += ' To generate valid datetimes, pass `dtype="datetime64[ns]"`'
+            raise InvalidArgument(err_msg)
+        elif issubclass(dtype, timedelta):
+            err_msg += ' To generate valid timedeltas, pass `dtype="timedelta64[ns]"`'
+            raise InvalidArgument(err_msg)
         note_deprecation(
-            f"Passed dtype={dtype!r} is not a valid Pandas dtype.  We'll treat it as "
+            f"{err_msg}  We'll treat it as "
             "dtype=object for now, but this will be an error in a future version.",
             since="2021-12-31",
             has_codemod=False,
+            stacklevel=1,
         )
 
     if isinstance(dtype, st.SearchStrategy):
         raise InvalidArgument(
-            f"Passed dtype={dtype!r} is a strategy, but we require a concrete dtype "
+            f"Passed {dtype=} is a strategy, but we require a concrete dtype "
             "here.  See https://stackoverflow.com/q/74355937 for workaround patterns."
         )
-    dtype = try_convert(np.dtype, dtype, "dtype")
+
+    _get_subclasses = getattr(IntegerDtype, "__subclasses__", list)
+    dtype = {t.name: t() for t in _get_subclasses()}.get(dtype, dtype)
+
+    if isinstance(dtype, IntegerDtype):
+        is_na_dtype = True
+        dtype = np.dtype(dtype.name.lower())
+    elif dtype is not None:
+        is_na_dtype = False
+        dtype = try_convert(np.dtype, dtype, "dtype")
+    else:
+        is_na_dtype = False
 
     if elements is None:
         elements = npst.from_dtype(dtype)
+        if is_na_dtype:
+            elements = st.none() | elements
     elif dtype is not None:
 
         def convert_element(value):
+            if is_na_dtype and value is None:
+                return None
             name = f"draw({prefix}elements)"
             try:
                 return np.array([value], dtype=dtype)[0]
-            except TypeError:
+            except (TypeError, ValueError):
                 raise InvalidArgument(
                     "Cannot convert %s=%r of type %s to dtype %s"
                     % (name, value, type(value).__name__, dtype.str)
-                ) from None
-            except ValueError:
-                raise InvalidArgument(
-                    f"Cannot convert {name}={value!r} to type {dtype.str}"
                 ) from None
 
         elements = elements.map(convert_element)
@@ -282,8 +303,16 @@ def series(
     else:
         check_strategy(index, "index")
 
-    elements, dtype = elements_and_dtype(elements, dtype)
+    elements, np_dtype = elements_and_dtype(elements, dtype)
     index_strategy = index
+
+    # if it is converted to an object, use object for series type
+    if (
+        np_dtype is not None
+        and np_dtype.kind == "O"
+        and not isinstance(dtype, IntegerDtype)
+    ):
+        dtype = np_dtype
 
     @st.composite
     def result(draw):
@@ -293,13 +322,13 @@ def series(
             if dtype is not None:
                 result_data = draw(
                     npst.arrays(
-                        dtype=dtype,
+                        dtype=object,
                         elements=elements,
                         shape=len(index),
                         fill=fill,
                         unique=unique,
                     )
-                )
+                ).tolist()
             else:
                 result_data = list(
                     draw(
@@ -310,9 +339,8 @@ def series(
                             fill=fill,
                             unique=unique,
                         )
-                    )
+                    ).tolist()
                 )
-
             return pandas.Series(result_data, index=index, dtype=dtype, name=draw(name))
         else:
             return pandas.Series(
@@ -549,7 +577,7 @@ def data_frames(
 
         column_names.add(c.name)
 
-        c.elements, c.dtype = elements_and_dtype(c.elements, c.dtype, label)
+        c.elements, _ = elements_and_dtype(c.elements, c.dtype, label)
 
         if c.dtype is None and rows is not None:
             raise InvalidArgument(
@@ -589,7 +617,9 @@ def data_frames(
             if columns_without_fill:
                 for c in columns_without_fill:
                     data[c.name] = pandas.Series(
-                        np.zeros(shape=len(index), dtype=c.dtype), index=index
+                        np.zeros(shape=len(index), dtype=object),
+                        index=index,
+                        dtype=c.dtype,
                     )
                 seen = {c.name: set() for c in columns_without_fill if c.unique}
 
@@ -614,7 +644,7 @@ def data_frames(
                                 value, (float, int, str, bool, datetime, timedelta)
                             ):
                                 raise ValueError(
-                                    f"Failed to add value={value!r} to column "
+                                    f"Failed to add {value=} to column "
                                     f"{c.name} with dtype=None.  Maybe passing "
                                     "dtype=object would help?"
                                 ) from err

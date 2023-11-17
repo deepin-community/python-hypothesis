@@ -20,6 +20,7 @@ See https://github.com/HypothesisWorks/hypothesis/issues/3140 for details.
 """
 
 import base64
+import json
 import sys
 from inspect import signature
 
@@ -59,6 +60,7 @@ check to assure Hypothesis that you understand what you are doing.
 """
 
 STATS_KEY = "_hypothesis_stats"
+FAILING_EXAMPLES_KEY = "_hypothesis_failing_examples"
 
 
 class StoringReporter:
@@ -89,7 +91,7 @@ if tuple(map(int, pytest.__version__.split(".")[:2])) < (4, 6):  # pragma: no co
         Note that the pytest developers no longer support your version either!
         Disabling the Hypothesis pytest plugin...
     """
-    warnings.warn(PYTEST_TOO_OLD_MESSAGE % (pytest.__version__,))
+    warnings.warn(PYTEST_TOO_OLD_MESSAGE % (pytest.__version__,), stacklevel=1)
 
 else:
 
@@ -166,7 +168,7 @@ else:
             and Phase.explain not in settings.default.phases
         ):
             name = f"{settings._current_profile}-with-explain-phase"
-            phases = settings.default.phases + (Phase.explain,)
+            phases = (*settings.default.phases, Phase.explain)
             settings.register_profile(name, phases=phases)
             settings.load_profile(name)
 
@@ -188,10 +190,10 @@ else:
         from hypothesis import core
         from hypothesis.internal.detection import is_hypothesis_test
 
-        ## See https://github.com/pytest-dev/pytest/issues/9159
-        # TODO: add `pytest_version >= (7, 2) or` once the issue above is fixed.
+        # See https://github.com/pytest-dev/pytest/issues/9159
         core.pytest_shows_exceptiongroups = (
-            item.config.getoption("tbstyle", "auto") == "native"
+            getattr(pytest, "version_tuple", ())[:2] >= (7, 2)
+            or item.config.getoption("tbstyle", "auto") == "native"
         )
         core.running_under_pytest = True
 
@@ -224,7 +226,7 @@ else:
                     raise_hypothesis_usage_error(message % (name,))
             yield
         else:
-            from hypothesis import HealthCheck, settings
+            from hypothesis import HealthCheck, settings as Settings
             from hypothesis.internal.escalation import current_pytest_item
             from hypothesis.internal.healthcheck import fail_health_check
             from hypothesis.reporting import with_reporter
@@ -235,14 +237,15 @@ else:
             # work, the test object is probably something weird
             # (e.g a stateful test wrapper), so we skip the function-scoped
             # fixture check.
-            settings = getattr(item.obj, "_hypothesis_internal_use_settings", None)
+            settings = getattr(
+                item.obj, "_hypothesis_internal_use_settings", Settings.default
+            )
 
             # Check for suspicious use of function-scoped fixtures, but only
             # if the corresponding health check is not suppressed.
-            if (
-                settings is not None
-                and HealthCheck.function_scoped_fixture
-                not in settings.suppress_health_check
+            fixture_params = False
+            if not set(settings.suppress_health_check).issuperset(
+                {HealthCheck.function_scoped_fixture, HealthCheck.differing_executors}
             ):
                 # Warn about function-scoped fixtures, excluding autouse fixtures because
                 # the advice is probably not actionable and the status quo seems OK...
@@ -254,6 +257,7 @@ else:
                     if argnames is None:
                         argnames = frozenset(signature(item.function).parameters)
                     for fx in fx_defs:
+                        fixture_params |= bool(fx.params)
                         if fx.argname in argnames:
                             active_fx = item._request._get_active_fixturedef(fx.argname)
                             if active_fx.scope == "function":
@@ -263,7 +267,18 @@ else:
                                     HealthCheck.function_scoped_fixture,
                                 )
 
-            if item.get_closest_marker("parametrize") is not None:
+            if fixture_params or (item.get_closest_marker("parametrize") is not None):
+                # Disable the differing_executors health check due to false alarms:
+                # see https://github.com/HypothesisWorks/hypothesis/issues/3733
+                from hypothesis import settings as Settings
+
+                fn = getattr(item.obj, "__func__", item.obj)
+                fn._hypothesis_internal_use_settings = Settings(
+                    parent=settings,
+                    suppress_health_check={HealthCheck.differing_executors}
+                    | set(settings.suppress_health_check),
+                )
+
                 # Give every parametrized test invocation a unique database key
                 key = item.nodeid.encode()
                 item.obj.hypothesis.inner_test._hypothesis_internal_add_digest = key
@@ -298,7 +313,12 @@ else:
             report.sections.append(
                 ("Hypothesis", "\n".join(item.hypothesis_report_information))
             )
-        if hasattr(item, "hypothesis_statistics") and report.when == "teardown":
+        if report.when != "teardown":
+            return
+
+        terminalreporter = item.config.pluginmanager.getplugin("terminalreporter")
+
+        if hasattr(item, "hypothesis_statistics"):
             stats = item.hypothesis_statistics
             stats_base64 = base64.b64encode(stats.encode()).decode()
 
@@ -314,27 +334,60 @@ else:
                 xml.add_global_property(name, stats_base64)
 
             # If there's a terminal report, include our summary stats for each test
-            terminalreporter = item.config.pluginmanager.getplugin("terminalreporter")
             if terminalreporter is not None:
-                # ideally, we would store this on terminalreporter.config.stash, but
-                # pytest-xdist doesn't copy that back to the controller
                 report.__dict__[STATS_KEY] = stats
 
             # If there's an HTML report, include our summary stats for each test
             pytest_html = item.config.pluginmanager.getplugin("html")
             if pytest_html is not None:  # pragma: no cover
-                report.extra = getattr(report, "extra", []) + [
-                    pytest_html.extras.text(stats, name="Hypothesis stats")
+                report.extra = [
+                    *getattr(report, "extra", []),
+                    pytest_html.extras.text(stats, name="Hypothesis stats"),
                 ]
 
+        # This doesn't intrinsically have anything to do with the terminalreporter;
+        # we're just cargo-culting a way to get strings back to a single function
+        # even if the test were distributed with pytest-xdist.
+        failing_examples = getattr(item, FAILING_EXAMPLES_KEY, None)
+        if failing_examples and terminalreporter is not None:
+            try:
+                from hypothesis.extra._patching import FAIL_MSG, get_patch_for
+            except ImportError:
+                return
+            # We'll save this as a triple of [filename, hunk_before, hunk_after].
+            triple = get_patch_for(item.obj, [(x, FAIL_MSG) for x in failing_examples])
+            if triple is not None:
+                report.__dict__[FAILING_EXAMPLES_KEY] = json.dumps(triple)
+
     def pytest_terminal_summary(terminalreporter):
-        if terminalreporter.config.getoption(PRINT_STATISTICS_OPTION):
+        failing_examples = []
+        print_stats = terminalreporter.config.getoption(PRINT_STATISTICS_OPTION)
+        if print_stats:
             terminalreporter.section("Hypothesis Statistics")
-            for reports in terminalreporter.stats.values():
-                for report in reports:
-                    stats = report.__dict__.get(STATS_KEY)
-                    if stats:
-                        terminalreporter.write_line(stats + "\n\n")
+        for reports in terminalreporter.stats.values():
+            for report in reports:
+                stats = report.__dict__.get(STATS_KEY)
+                if stats and print_stats:
+                    terminalreporter.write_line(stats + "\n\n")
+                fex = report.__dict__.get(FAILING_EXAMPLES_KEY)
+                if fex:
+                    failing_examples.append(json.loads(fex))
+
+        if failing_examples:
+            # This must have been imported already to write the failing examples
+            from hypothesis.extra._patching import gc_patches, make_patch, save_patch
+
+            patch = make_patch(failing_examples)
+            try:
+                gc_patches()
+                fname = save_patch(patch)
+            except Exception:
+                # fail gracefully if we hit any filesystem or permissions problems
+                return
+            terminalreporter.section("Hypothesis")
+            terminalreporter.write_line(
+                f"`git apply {fname}` to add failing examples to your code."
+            )
 
     def pytest_collection_modifyitems(items):
         if "hypothesis" not in sys.modules:

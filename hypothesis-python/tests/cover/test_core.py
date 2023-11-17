@@ -72,7 +72,7 @@ def test_given_shrinks_pytest_helper_errors():
     def inner(x):
         final_value[0] = x
         if x > 100:
-            pytest.fail(f"x={x!r} is too big!")
+            pytest.fail(f"{x=} is too big!")
 
     with pytest.raises(Failed):
         inner()
@@ -87,7 +87,7 @@ def test_pytest_skip_skips_shrinking():
     def inner(x):
         values.append(x)
         if x > 100:
-            pytest.skip(f"x={x!r} is too big!")
+            pytest.skip(f"{x=} is too big!")
 
     with pytest.raises(Skipped):
         inner()
@@ -143,3 +143,27 @@ def empty_db(_):
 def test_non_executed_tests_raise_skipped(test_fn):
     with pytest.raises(unittest.SkipTest):
         test_fn()
+
+
+@pytest.mark.parametrize(
+    "codec, max_codepoint, exclude_categories, categories",
+    [
+        ("ascii", None, None, None),
+        ("ascii", 128, None, None),
+        ("ascii", 100, None, None),
+        ("utf-8", None, None, None),
+        ("utf-8", None, ["Cs"], None),
+        ("utf-8", None, ["N"], None),
+        ("utf-8", None, None, ["N"]),
+    ],
+)
+@given(s.data())
+def test_characters_codec(codec, max_codepoint, exclude_categories, categories, data):
+    strategy = s.characters(
+        codec=codec,
+        max_codepoint=max_codepoint,
+        exclude_categories=exclude_categories,
+        categories=categories,
+    )
+    example = data.draw(strategy)
+    assert example.encode(encoding=codec).decode(encoding=codec) == example

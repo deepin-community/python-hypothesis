@@ -8,7 +8,9 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import sys
 import threading
+import warnings
 
 from hypothesis import HealthCheck, given, settings, strategies as st
 
@@ -146,14 +148,25 @@ def test_drawing_from_recursive_strategy_is_thread_safe():
 
     threads = []
 
-    for _ in range(4):
-        threads.append(threading.Thread(target=test))
+    original_recursionlimit = sys.getrecursionlimit()
 
-    for thread in threads:
-        thread.start()
+    # We may get a warning here about not resetting recursionlimit,
+    # since it was changed during execution; ignore it.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
 
-    for thread in threads:
-        thread.join()
+        for _ in range(4):
+            threads.append(threading.Thread(target=test))
+
+        for thread in threads:
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+    # Cleanup: reset the recursion limit that was (probably) not reset
+    # automatically in the threaded test.
+    sys.setrecursionlimit(original_recursionlimit)
 
     assert not errors
 
@@ -164,6 +177,7 @@ SELF_REF = st.recursive(
 )
 
 
+@settings(suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much])
 @given(SELF_REF)
 def test_self_ref_regression(_):
     # See https://github.com/HypothesisWorks/hypothesis/issues/2794

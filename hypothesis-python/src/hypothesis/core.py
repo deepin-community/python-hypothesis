@@ -23,7 +23,6 @@ import warnings
 import zlib
 from collections import defaultdict
 from functools import partial
-from io import StringIO
 from random import Random
 from typing import (
     TYPE_CHECKING,
@@ -67,19 +66,21 @@ from hypothesis.errors import (
     Unsatisfiable,
     UnsatisfiedAssumption,
 )
-from hypothesis.executors import default_new_style_executor, new_style_executor
 from hypothesis.internal.compat import (
     PYPY,
     BaseExceptionGroup,
+    add_note,
     bad_django_TestCase,
     get_type_hints,
     int_from_bytes,
 )
 from hypothesis.internal.conjecture.data import ConjectureData, Status
-from hypothesis.internal.conjecture.engine import ConjectureRunner
+from hypothesis.internal.conjecture.engine import BUFFER_SIZE, ConjectureRunner
+from hypothesis.internal.conjecture.junkdrawer import ensure_free_stackframes
 from hypothesis.internal.conjecture.shrinker import sort_key
 from hypothesis.internal.entropy import deterministic_PRNG
 from hypothesis.internal.escalation import (
+    current_pytest_item,
     escalate_hypothesis_internal_error,
     format_exception,
     get_interesting_origin,
@@ -107,12 +108,11 @@ from hypothesis.reporting import (
     with_reporter,
 )
 from hypothesis.statistics import describe_targets, note_statistics
-from hypothesis.strategies._internal.collections import TupleStrategy
 from hypothesis.strategies._internal.misc import NOTHING
 from hypothesis.strategies._internal.strategies import (
     Ex,
-    MappedSearchStrategy,
     SearchStrategy,
+    check_strategy,
 )
 from hypothesis.vendor.pretty import RepresentationPrinter
 from hypothesis.version import __version__
@@ -165,14 +165,15 @@ class example:
 
     def xfail(
         self,
-        condition: bool = True,
+        condition: bool = True,  # noqa: FBT002
         *,
         reason: str = "",
         raises: Union[
             Type[BaseException], Tuple[Type[BaseException], ...]
         ] = BaseException,
     ) -> "example":
-        """Mark this example as an expected failure, like pytest.mark.xfail().
+        """Mark this example as an expected failure, similarly to
+        :obj:`pytest.mark.xfail(strict=True) <pytest.mark.xfail>`.
 
         Expected-failing examples allow you to check that your test does fail on
         some examples, and therefore build confidence that *passing* tests are
@@ -187,6 +188,37 @@ class example:
             @example(...).xfail(condition=sys.platform != "linux", raises=OSError)
             def test(x):
                 pass
+
+        .. note::
+
+            Expected-failing examples are handled separately from those generated
+            by strategies, so you should usually ensure that there is no overlap.
+
+            .. code-block:: python
+
+                @example(x=1, y=0).xfail(raises=ZeroDivisionError)
+                @given(x=st.just(1), y=st.integers())  # Missing `.filter(bool)`!
+                def test_fraction(x, y):
+                    # This test will try the explicit example and see it fail as
+                    # expected, then go on to generate more examples from the
+                    # strategy.  If we happen to generate y=0, the test will fail
+                    # because only the explicit example is treated as xfailing.
+                    x / y
+
+        Note that this "method chaining" syntax requires Python 3.9 or later, for
+        :pep:`614` relaxing grammar restrictions on decorators.  If you need to
+        support older versions of Python, you can use an identity function:
+
+        .. code-block:: python
+
+            def identity(x):
+                return x
+
+
+            @identity(example(...).xfail())
+            def test(x):
+                pass
+
         """
         check_type(bool, condition, "condition")
         check_type(str, reason, "reason")
@@ -200,7 +232,7 @@ class example:
             )
         ):
             raise InvalidArgument(
-                f"raises={raises!r} must be an exception type or tuple of exception types"
+                f"{raises=} must be an exception type or tuple of exception types"
             )
         if condition:
             self._this_example = attr.evolve(
@@ -208,7 +240,7 @@ class example:
             )
         return self
 
-    def via(self, *whence: str) -> "example":
+    def via(self, whence: str, /) -> "example":
         """Attach a machine-readable label noting whence this example came.
 
         The idea is that tools will be able to add ``@example()`` cases for you, e.g.
@@ -243,25 +275,10 @@ class example:
                 pass
 
         """
-        if len(whence) != 1 or not isinstance(whence[0], str):
+        if not isinstance(whence, str):
             raise InvalidArgument(".via() must be passed a string")
         # This is deliberately a no-op at runtime; the tools operate on source code.
         return self
-
-    if sys.version_info[:2] >= (3, 8):
-        # We want a positional-only argument, and on Python 3.8+ we'll get it.
-        __sig = get_signature(via)
-        via = define_function_signature(
-            name=via.__name__,
-            docstring=via.__doc__,
-            signature=__sig.replace(
-                parameters=[
-                    p.replace(kind=inspect.Parameter.POSITIONAL_ONLY)
-                    for p in __sig.parameters.values()
-                ]
-            ),
-        )(via)
-        del __sig
 
 
 def seed(seed: Hashable) -> Callable[[TestFunc], TestFunc]:
@@ -341,20 +358,6 @@ def decode_failure(blob):
         )
 
 
-class WithRunner(MappedSearchStrategy):
-    def __init__(self, base, runner):
-        assert runner is not None
-        super().__init__(base)
-        self.runner = runner
-
-    def do_draw(self, data):
-        data.hypothesis_runner = self.runner
-        return self.mapped_strategy.do_draw(data)
-
-    def __repr__(self):
-        return f"WithRunner({self.mapped_strategy!r}, runner={self.runner!r})"
-
-
 def _invalid(message, *, exc=InvalidArgument, test, given_kwargs):
     @impersonate(test)
     def wrapped_test(*arguments, **kwargs):  # pragma: no cover  # coverage limitation
@@ -431,32 +434,8 @@ def is_invalid_test(test, original_sig, given_arguments, given_kwargs):
         )
 
 
-class ArtificialDataForExample(ConjectureData):
-    """Dummy object that pretends to be a ConjectureData object for the purposes of
-    drawing arguments for @example. Provides just enough of the ConjectureData API
-    to allow the test to run. Does not support any sort of interactive drawing,
-    but that's fine because you can't access that when all of your arguments are
-    provided by @example.
-    """
-
-    def __init__(self, args, kwargs):
-        self.__draws = 0
-        self.__args = args
-        self.__kwargs = kwargs
-        super().__init__(max_length=0, prefix=b"", random=None)
-
-    def draw_bits(self, n):
-        raise NotImplementedError("Dummy object should never be asked for bits.")
-
-    def draw(self, strategy):
-        assert self.__draws == 0
-        self.__draws += 1
-        # The main strategy for given is always a tuples strategy that returns
-        # first positional arguments then keyword arguments.
-        return self.__args, self.__kwargs
-
-
 def execute_explicit_examples(state, wrapped_test, arguments, kwargs, original_sig):
+    assert isinstance(state, StateForActualGivenExecution)
     posargs = [
         p.name
         for p in original_sig.parameters.values()
@@ -506,20 +485,32 @@ def execute_explicit_examples(state, wrapped_test, arguments, kwargs, original_s
         with local_settings(state.settings):
             fragments_reported = []
             try:
-                adata = ArtificialDataForExample(arguments, example_kwargs)
                 bits = ", ".join(nicerepr(x) for x in arguments) + ", ".join(
                     f"{k}={nicerepr(v)}" for k, v in example_kwargs.items()
                 )
+                execute_example = partial(
+                    state.execute_once,
+                    ConjectureData.for_buffer(b""),
+                    is_final=True,
+                    print_example=True,
+                    example_kwargs=example_kwargs,
+                )
                 with with_reporter(fragments_reported.append):
                     if example.raises is None:
-                        state.execute_once(adata, is_final=True, print_example=True)
+                        execute_example()
                     else:
                         # @example(...).xfail(...)
+
                         try:
-                            state.execute_once(adata, is_final=True, print_example=True)
+                            execute_example()
                         except failure_exceptions_to_catch() as err:
                             if not isinstance(err, example.raises):
                                 raise
+                            # Save a string form of this example; we'll warn if it's
+                            # ever generated by the strategy (which can't be xfailed)
+                            state.xfail_example_reprs.add(
+                                repr_call(state.test, arguments, example_kwargs)
+                            )
                         except example.raises as err:
                             # We'd usually check this as early as possible, but it's
                             # possible for failure_exceptions_to_catch() to grow when
@@ -617,6 +608,14 @@ def get_random_for_wrapped_test(test, wrapped_test):
         return Random(seed)
 
 
+@attr.s
+class Stuff:
+    selfy = attr.ib(default=None)
+    args = attr.ib(factory=tuple)
+    kwargs = attr.ib(factory=dict)
+    given_kwargs = attr.ib(factory=dict)
+
+
 def process_arguments_to_given(wrapped_test, arguments, kwargs, given_kwargs, params):
     selfy = None
     arguments, kwargs = convert_positional_arguments(wrapped_test, arguments, kwargs)
@@ -635,26 +634,16 @@ def process_arguments_to_given(wrapped_test, arguments, kwargs, given_kwargs, pa
     if is_mock(selfy):
         selfy = None
 
-    test_runner = new_style_executor(selfy)
-
     arguments = tuple(arguments)
 
-    # We use TupleStrategy over tuples() here to avoid polluting
-    # st.STRATEGY_CACHE with references (see #493), and because this is
-    # trivial anyway if the fixed_dictionaries strategy is cacheable.
-    search_strategy = TupleStrategy(
-        (
-            st.just(arguments),
-            st.fixed_dictionaries(given_kwargs).map(lambda args: dict(args, **kwargs)),
-        )
-    )
+    with ensure_free_stackframes():
+        for k, s in given_kwargs.items():
+            check_strategy(s, name=k)
+            s.validate()
 
-    if selfy is not None:
-        search_strategy = WithRunner(search_strategy, selfy)
+    stuff = Stuff(selfy=selfy, args=arguments, kwargs=kwargs, given_kwargs=given_kwargs)
 
-    search_strategy.validate()
-
-    return arguments, kwargs, test_runner, search_strategy
+    return arguments, kwargs, stuff
 
 
 def skip_exceptions_to_reraise():
@@ -712,12 +701,39 @@ def new_given_signature(original_sig, given_kwargs):
     )
 
 
+def default_executor(data, function):
+    return function(data)
+
+
+def get_executor(runner):
+    try:
+        execute_example = runner.execute_example
+    except AttributeError:
+        pass
+    else:
+        return lambda data, function: execute_example(partial(function, data))
+
+    if hasattr(runner, "setup_example") or hasattr(runner, "teardown_example"):
+        setup = getattr(runner, "setup_example", None) or (lambda: None)
+        teardown = getattr(runner, "teardown_example", None) or (lambda ex: None)
+
+        def execute(data, function):
+            token = None
+            try:
+                token = setup()
+                return function(data)
+            finally:
+                teardown(token)
+
+        return execute
+
+    return default_executor
+
+
 class StateForActualGivenExecution:
-    def __init__(
-        self, test_runner, search_strategy, test, settings, random, wrapped_test
-    ):
-        self.test_runner = test_runner
-        self.search_strategy = search_strategy
+    def __init__(self, stuff, test, settings, random, wrapped_test):
+        self.test_runner = get_executor(stuff.selfy)
+        self.stuff = stuff
         self.settings = settings
         self.last_exception = None
         self.falsifying_examples = ()
@@ -727,6 +743,7 @@ class StateForActualGivenExecution:
 
         self.is_find = getattr(wrapped_test, "_hypothesis_internal_is_find", False)
         self.wrapped_test = wrapped_test
+        self.xfail_example_reprs = set()
 
         self.test = test
 
@@ -741,7 +758,13 @@ class StateForActualGivenExecution:
         self.explain_traces = defaultdict(set)
 
     def execute_once(
-        self, data, print_example=False, is_final=False, expected_failure=None
+        self,
+        data,
+        *,
+        print_example=False,
+        is_final=False,
+        expected_failure=None,
+        example_kwargs=None,
     ):
         """Run the test function once, using ``data`` as input.
 
@@ -783,38 +806,65 @@ class StateForActualGivenExecution:
 
         def run(data):
             # Set up dynamic context needed by a single test run.
-            with local_settings(self.settings):
-                with deterministic_PRNG():
-                    with BuildContext(data, is_final=is_final) as context:
-                        # Generate all arguments to the test function.
-                        args, kwargs = data.draw(self.search_strategy)
-                        if expected_failure is not None:
-                            nonlocal text_repr
-                            text_repr = repr_call(test, args, kwargs)
+            if self.stuff.selfy is not None:
+                data.hypothesis_runner = self.stuff.selfy
+            # Generate all arguments to the test function.
+            args = self.stuff.args
+            kwargs = dict(self.stuff.kwargs)
+            if example_kwargs is None:
+                a, kw, argslices = context.prep_args_kwargs_from_strategies(
+                    (), self.stuff.given_kwargs
+                )
+                assert not a, "strategies all moved to kwargs by now"
+            else:
+                kw = example_kwargs
+                argslices = {}
+            kwargs.update(kw)
+            if expected_failure is not None:
+                nonlocal text_repr
+                text_repr = repr_call(test, args, kwargs)
+                if text_repr in self.xfail_example_reprs:
+                    warnings.warn(
+                        f"We generated {text_repr}, which seems identical "
+                        "to one of your `@example(...).xfail()` cases.  "
+                        "Revise the strategy to avoid this overlap?",
+                        HypothesisWarning,
+                        # Checked in test_generating_xfailed_examples_warns!
+                        stacklevel=6,
+                    )
 
-                        if print_example or current_verbosity() >= Verbosity.verbose:
-                            output = StringIO()
+            if print_example or current_verbosity() >= Verbosity.verbose:
+                printer = RepresentationPrinter(context=context)
+                if print_example:
+                    printer.text("Falsifying example:")
+                else:
+                    printer.text("Trying example:")
 
-                            printer = RepresentationPrinter(output, context=context)
-                            if print_example:
-                                printer.text("Falsifying example:")
-                            else:
-                                printer.text("Trying example:")
+                if self.print_given_args:
+                    printer.text(" ")
+                    printer.repr_call(
+                        test.__name__,
+                        args,
+                        kwargs,
+                        force_split=True,
+                        arg_slices=argslices,
+                        leading_comment=(
+                            "# " + context.data.slice_comments[(0, 0)]
+                            if (0, 0) in context.data.slice_comments
+                            else None
+                        ),
+                    )
+                report(printer.getvalue())
+            return test(*args, **kwargs)
 
-                            if self.print_given_args:
-                                printer.text(" ")
-                                printer.repr_call(
-                                    test.__name__,
-                                    args,
-                                    kwargs,
-                                    force_split=True,
-                                )
-                            report(printer.getvalue())
-                        return test(*args, **kwargs)
-
-        # Run the test function once, via the executor hook.
-        # In most cases this will delegate straight to `run(data)`.
-        result = self.test_runner(data, run)
+        # self.test_runner can include the execute_example method, or setup/teardown
+        # _example, so it's important to get the PRNG and build context in place first.
+        with local_settings(self.settings):
+            with deterministic_PRNG():
+                with BuildContext(data, is_final=is_final) as context:
+                    # Run the test function once, via the executor hook.
+                    # In most cases this will delegate straight to `run(data)`.
+                    result = self.test_runner(data, run)
 
         # If a failure was expected, it should have been raised already, so
         # instead raise an appropriate diagnostic error.
@@ -860,20 +910,18 @@ class StateForActualGivenExecution:
                 and not self.failed_due_to_deadline
                 and Phase.shrink in self.settings.phases
                 and Phase.explain in self.settings.phases
-                and sys.gettrace() is None
+                and (sys.gettrace() is None or sys.version_info[:2] >= (3, 12))
                 and not PYPY
             ):  # pragma: no cover
                 # This is in fact covered by our *non-coverage* tests, but due to the
                 # settrace() contention *not* by our coverage tests.  Ah well.
-                tracer = Tracer()
-                try:
-                    sys.settrace(tracer.trace)
-                    result = self.execute_once(data)
-                    if data.status == Status.VALID:
-                        self.explain_traces[None].add(frozenset(tracer.branches))
-                finally:
-                    sys.settrace(None)
-                    trace = frozenset(tracer.branches)
+                with Tracer() as tracer:
+                    try:
+                        result = self.execute_once(data)
+                        if data.status == Status.VALID:
+                            self.explain_traces[None].add(frozenset(tracer.branches))
+                    finally:
+                        trace = frozenset(tracer.branches)
             else:
                 result = self.execute_once(data)
             if result is not None:
@@ -894,7 +942,8 @@ class StateForActualGivenExecution:
         except (
             HypothesisDeprecationWarning,
             FailedHealthCheck,
-        ) + skip_exceptions_to_reraise():
+            *skip_exceptions_to_reraise(),
+        ):
             # These are fatal errors or control exceptions that should stop the
             # engine, so we re-raise them.
             raise
@@ -989,6 +1038,7 @@ class StateForActualGivenExecution:
             fragments = []
 
             ran_example = ConjectureData.for_buffer(falsifying_example.buffer)
+            ran_example.slice_comments = falsifying_example.slice_comments
             assert info.__expected_exception is not None
             try:
                 with with_reporter(fragments.append):
@@ -1034,21 +1084,17 @@ class StateForActualGivenExecution:
         _raise_to_user(errors_to_report, self.settings, report_lines)
 
 
-def add_note(exc, note):
-    try:
-        exc.add_note(note)
-    except AttributeError:
-        if not hasattr(exc, "__notes__"):
-            exc.__notes__ = []
-        exc.__notes__.append(note)
-
-
 def _raise_to_user(errors_to_report, settings, target_lines, trailer=""):
     """Helper function for attaching notes and grouping multiple errors."""
-    if settings.verbosity >= Verbosity.normal:
-        for fragments, err in errors_to_report:
-            for note in fragments:
-                add_note(err, note)
+    failing_prefix = "Falsifying example: "
+    ls = []
+    for fragments, err in errors_to_report:
+        for note in fragments:
+            add_note(err, note)
+            if note.startswith(failing_prefix):
+                ls.append(note[len(failing_prefix) :])
+    if current_pytest_item.value:
+        current_pytest_item.value._hypothesis_failing_examples = ls
 
     if len(errors_to_report) == 1:
         _, the_error_hypothesis_found = errors_to_report[0]
@@ -1126,7 +1172,16 @@ class HypothesisHandle:
 
 @overload
 def given(
-    *_given_arguments: Union[SearchStrategy[Any], EllipsisType],
+    _: EllipsisType, /
+) -> Callable[
+    [Callable[..., Optional[Coroutine[Any, Any, None]]]], Callable[[], None]
+]:  # pragma: no cover
+    ...
+
+
+@overload
+def given(
+    *_given_arguments: SearchStrategy[Any],
 ) -> Callable[
     [Callable[..., Optional[Coroutine[Any, Any, None]]]], Callable[..., None]
 ]:  # pragma: no cover
@@ -1209,6 +1264,8 @@ def given(
                 )
             given_kwargs[name] = st.from_type(hints[name])
 
+        prev_self = Unset = object()
+
         @impersonate(test)
         @define_function_signature(test.__name__, test.__doc__, new_signature)
         def wrapped_test(*arguments, **kwargs):
@@ -1231,14 +1288,13 @@ def given(
 
             random = get_random_for_wrapped_test(test, wrapped_test)
 
-            processed_args = process_arguments_to_given(
+            arguments, kwargs, stuff = process_arguments_to_given(
                 wrapped_test, arguments, kwargs, given_kwargs, new_signature.parameters
             )
-            arguments, kwargs, test_runner, search_strategy = processed_args
 
             if (
                 inspect.iscoroutinefunction(test)
-                and test_runner is default_new_style_executor
+                and get_executor(stuff.selfy) is default_executor
             ):
                 # See https://github.com/HypothesisWorks/hypothesis/issues/3054
                 # If our custom executor doesn't handle coroutines, or we return an
@@ -1252,8 +1308,8 @@ def given(
                     "readthedocs.io/en/latest/details.html#custom-function-execution"
                 )
 
-            runner = getattr(search_strategy, "runner", None)
-            if isinstance(runner, TestCase) and test.__name__ in dir(TestCase):
+            runner = stuff.selfy
+            if isinstance(stuff.selfy, TestCase) and test.__name__ in dir(TestCase):
                 msg = (
                     f"You have applied @given to the method {test.__name__}, which is "
                     "used by the unittest runner but is not itself a test."
@@ -1270,9 +1326,26 @@ def given(
                     "to ensure that each example is run in a separate "
                     "database transaction."
                 )
+            if settings.database is not None:
+                nonlocal prev_self
+                # Check selfy really is self (not e.g. a mock) before we health-check
+                cur_self = (
+                    stuff.selfy
+                    if getattr(type(stuff.selfy), test.__name__, None) is wrapped_test
+                    else None
+                )
+                if prev_self is Unset:
+                    prev_self = cur_self
+                elif cur_self is not prev_self:
+                    msg = (
+                        f"The method {test.__qualname__} was called from multiple "
+                        "different executors. This may lead to flaky tests and "
+                        "nonreproducible errors when replaying from database."
+                    )
+                    fail_health_check(settings, msg, HealthCheck.differing_executors)
 
             state = StateForActualGivenExecution(
-                test_runner, search_strategy, test, settings, random, wrapped_test
+                stuff, test, settings, random, wrapped_test
             )
 
             reproduce_failure = wrapped_test._hypothesis_internal_use_reproduce_failure
@@ -1415,13 +1488,13 @@ def given(
                 parent=wrapped_test._hypothesis_internal_use_settings, deadline=None
             )
             random = get_random_for_wrapped_test(test, wrapped_test)
-            _args, _kwargs, test_runner, search_strategy = process_arguments_to_given(
+            _args, _kwargs, stuff = process_arguments_to_given(
                 wrapped_test, (), {}, given_kwargs, new_signature.parameters
             )
             assert not _args
             assert not _kwargs
             state = StateForActualGivenExecution(
-                test_runner, search_strategy, test, settings, random, wrapped_test
+                stuff, test, settings, random, wrapped_test
             )
             digest = function_digest(test)
             # We track the minimal-so-far example for each distinct origin, so
@@ -1436,7 +1509,7 @@ def given(
                 # This inner part is all that the fuzzer will actually run,
                 # so we keep it as small and as fast as possible.
                 if isinstance(buffer, io.IOBase):
-                    buffer = buffer.read()
+                    buffer = buffer.read(BUFFER_SIZE)
                 assert isinstance(buffer, (bytes, bytearray, memoryview))
                 data = ConjectureData.for_buffer(buffer)
                 try:
@@ -1495,10 +1568,13 @@ def find(
     if settings is None:
         settings = Settings(max_examples=2000)
     settings = Settings(
-        settings, suppress_health_check=HealthCheck.all(), report_multiple_bugs=False
+        settings, suppress_health_check=list(HealthCheck), report_multiple_bugs=False
     )
 
     if database_key is None and settings.database is not None:
+        # Note: The database key is not guaranteed to be unique. If not, replaying
+        # of database examples may fail to reproduce due to being replayed on the
+        # wrong condition.
         database_key = function_digest(condition)
 
     if not isinstance(specifier, SearchStrategy):
@@ -1515,7 +1591,7 @@ def find(
     def test(v):
         if condition(v):
             last[:] = [v]
-            raise Found()
+            raise Found
 
     if random is not None:
         test = seed(random.getrandbits(64))(test)

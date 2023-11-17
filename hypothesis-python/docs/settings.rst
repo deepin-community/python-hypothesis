@@ -55,16 +55,41 @@ Controlling what runs
 Hypothesis divides tests into logically distinct phases:
 
 1. Running explicit examples :ref:`provided with the @example decorator <providing-explicit-examples>`.
-2. Rerunning a selection of previously failing examples to reproduce a previously seen error
+2. Rerunning a selection of previously failing examples to reproduce a previously seen error.
 3. Generating new examples.
-4. Mutating examples for :ref:`targeted property-based testing <targeted-search>`.
+4. Mutating examples for :ref:`targeted property-based testing <targeted-search>` (requires generate phase).
 5. Attempting to shrink an example found in previous phases (other than phase 1 - explicit examples cannot be shrunk).
    This turns potentially large and complicated examples which may be hard to read into smaller and simpler ones.
-6. Attempting to explain the cause of the failure, by identifying suspicious lines of code
-   (e.g. the earliest lines which are never run on passing inputs, and always run on failures).
+6. Attempting to explain why your test failed (requires shrink phase).
+
+.. note::
+
+   The explain phase has two parts, each of which is best-effort - if Hypothesis can't
+   find a useful explanation, we'll just print the minimal failing example.
+
+   Following the first failure, Hypothesis will (:ref:`usually <phases>`) track which
+   lines of code are always run on failing but never on passing inputs.
    This relies on :func:`python:sys.settrace`, and is therefore automatically disabled on
    PyPy or if you are using :pypi:`coverage` or a debugger.  If there are no clearly
    suspicious lines of code, :pep:`we refuse the temptation to guess <20>`.
+
+   After shrinking to a minimal failing example, Hypothesis will try to find parts of
+   the example -- e.g. separate args to :func:`@given() <hypothesis.given>` -- which
+   can vary freely without changing the result of that minimal failing example.
+   If the automated experiments run without finding a passing variation, we leave a
+   comment in the final report:
+
+   .. code-block:: python
+
+       test_x_divided_by_y(
+           x=0,  # or any other generated value
+           y=0,
+       )
+
+   Just remember that the *lack* of an explanation sometimes just means that Hypothesis
+   couldn't efficiently find one, not that no explanation (or simpler failing example)
+   exists.
+
 
 The phases setting provides you with fine grained control over which of these run,
 with each phase corresponding to a value on the :class:`~hypothesis.Phase` enum:
@@ -215,7 +240,7 @@ If this variable is not defined the Hypothesis defined defaults will be loaded.
     >>> settings.register_profile("ci", max_examples=1000)
     >>> settings.register_profile("dev", max_examples=10)
     >>> settings.register_profile("debug", max_examples=10, verbosity=Verbosity.verbose)
-    >>> settings.load_profile(os.getenv(u"HYPOTHESIS_PROFILE", "default"))
+    >>> settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 
 If you are using the hypothesis pytest plugin and your profiles are registered
 by your conftest you can load one with the command line option ``--hypothesis-profile``.
@@ -223,3 +248,24 @@ by your conftest you can load one with the command line option ``--hypothesis-pr
 .. code:: bash
 
     $ pytest tests --hypothesis-profile <profile-name>
+
+
+.. _healthchecks:
+
+-------------
+Health checks
+-------------
+
+Hypothesis' health checks are designed to detect and warn you about performance
+problems where your tests are slow, inefficient, or generating very large examples.
+
+If this is expected, e.g. when generating large arrays or dataframes, you can selectively
+disable them with the :obj:`~hypothesis.settings.suppress_health_check` setting.
+The argument for this parameter is a list with elements drawn from any of
+the class-level attributes of the HealthCheck class.
+Using a value of ``list(HealthCheck)`` will disable all health checks.
+
+.. autoclass:: hypothesis.HealthCheck
+   :undoc-members:
+   :inherited-members:
+   :exclude-members: all

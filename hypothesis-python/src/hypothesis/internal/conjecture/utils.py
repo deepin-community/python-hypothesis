@@ -207,7 +207,7 @@ def biased_coin(
         # The logic here is a bit complicated and special cased to make it
         # play better with the shrinker.
 
-        # We imagine partitioning the real interval [0, 1] into 256 equal parts
+        # We imagine partitioning the real interval [0, 1] into 2**n equal parts
         # and looking at each part and whether its interior is wholly <= p
         # or wholly >= p. At most one part can be neither.
 
@@ -251,9 +251,9 @@ def biased_coin(
             else:
                 i = data.draw_bits(bits, forced=int(forced))
 
-            # We always label the region that causes us to repeat the loop as
-            # 255 so that shrinking this byte never causes us to need to draw
-            # more data.
+            # We always choose the region that causes us to repeat the loop as
+            # the maximum value, so that shrinking the drawn bits never causes
+            # us to need to draw more data.
             if partial and i == size - 1:
                 p = remainder
                 continue
@@ -279,11 +279,7 @@ def biased_coin(
                 # becomes i > falsey.
                 result = i > falsey
 
-            if i > 1:  # pragma: no branch
-                # Thanks to bytecode optimisations on CPython >= 3.7 and PyPy
-                # (see https://bugs.python.org/issue2506), coverage incorrectly
-                # thinks that this condition is always true.  You can trivially
-                # check by adding `else: assert False` and running the tests.
+            if i > 1:
                 data.draw_bits(bits, forced=int(result))
         break
     data.stop_example()
@@ -452,7 +448,7 @@ class many:
             self.data.stop_example()
             return False
 
-    def reject(self):
+    def reject(self, why: Optional[str] = None) -> None:
         """Reject the last example (i.e. don't count it towards our budget of
         elements because it's not going to go in the final collection)."""
         assert self.count > 0
@@ -463,7 +459,7 @@ class many:
         # failing too fast when we reject the first draw.
         if self.rejections > max(3, 2 * self.count):
             if self.count < self.min_size:
-                self.data.mark_invalid()
+                self.data.mark_invalid(why)
             else:
                 self.force_stop = True
 
@@ -471,7 +467,7 @@ class many:
 SMALLEST_POSITIVE_FLOAT: float = next_up(0.0) or sys.float_info.min
 
 
-@lru_cache()
+@lru_cache
 def _calc_p_continue(desired_avg: float, max_size: int) -> float:
     """Return the p_continue which will generate the desired average size."""
     assert desired_avg <= max_size, (desired_avg, max_size)

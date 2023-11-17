@@ -65,10 +65,12 @@ Inheritance diagram:
 import datetime
 import re
 import struct
+import sys
 import types
 import warnings
 from collections import defaultdict, deque
 from contextlib import contextmanager
+from enum import Flag
 from io import StringIO
 from math import copysign, isnan
 
@@ -77,9 +79,6 @@ __all__ = [
     "IDKey",
     "RepresentationPrinter",
 ]
-
-
-_re_pattern_type = type(re.compile(""))
 
 
 def _safe_getattr(obj, attr, default=None):
@@ -146,13 +145,31 @@ class RepresentationPrinter:
         self.snans = 0
 
         self.stack = []
-        self.singleton_pprinters = _singleton_pprinters.copy()
-        self.type_pprinters = _type_pprinters.copy()
-        self.deferred_pprinters = _deferred_type_pprinters.copy()
+        self.singleton_pprinters = {}
+        self.type_pprinters = {}
+        self.deferred_pprinters = {}
+        # If IPython has been imported, load up their pretty-printer registry
+        if "IPython.lib.pretty" in sys.modules:
+            ipp = sys.modules["IPython.lib.pretty"]
+            self.singleton_pprinters.update(ipp._singleton_pprinters)
+            self.type_pprinters.update(ipp._type_pprinters)
+            self.deferred_pprinters.update(ipp._deferred_type_pprinters)
+        # If there's overlap between our pprinters and IPython's, we'll use ours.
+        self.singleton_pprinters.update(_singleton_pprinters)
+        self.type_pprinters.update(_type_pprinters)
+        self.deferred_pprinters.update(_deferred_type_pprinters)
+
+        # for which-parts-matter, we track a mapping from the (start_idx, end_idx)
+        # of slices into the minimal failing example; this is per-interesting_origin
+        # but we report each separately so that's someone else's problem here.
+        # Invocations of self.repr_call() can report the slice for each argument,
+        # which will then be used to look up the relevant comment if any.
         if context is None:
             self.known_object_printers = defaultdict(list)
+            self.slice_comments = {}
         else:
             self.known_object_printers = context.known_object_printers
+            self.slice_comments = context.data.slice_comments
         assert all(isinstance(k, IDKey) for k in self.known_object_printers)
 
     def pretty(self, obj):
@@ -208,6 +225,9 @@ class RepresentationPrinter:
                     # object, which must have been returned from multiple calls due to
                     # e.g. memoization.  If they all return the same string, we'll use
                     # the first; otherwise we'll pretend that *none* were registered.
+                    #
+                    # It's annoying, but still seems to be the best option for which-
+                    # parts-matter too, as unreportable results aren't very useful.
                     strs = set()
                     for f in printers:
                         p = RepresentationPrinter()
@@ -297,21 +317,33 @@ class RepresentationPrinter:
         (usually the width of the opening text), the second and third the
         opening and closing delimiters.
         """
+        self.begin_group(indent=indent, open=open)
+        try:
+            yield
+        finally:
+            self.end_group(dedent=indent, close=close)
+
+    def begin_group(self, indent=0, open=""):
+        """Use the `with group(...) context manager instead.
+
+        The begin_group() and end_group() methods are for IPython compatibility only;
+        see https://github.com/HypothesisWorks/hypothesis/issues/3721 for details.
+        """
         if open:
             self.text(open)
         group = Group(self.group_stack[-1].depth + 1)
         self.group_stack.append(group)
         self.group_queue.enq(group)
         self.indentation += indent
-        try:
-            yield
-        finally:
-            self.indentation -= indent
-            group = self.group_stack.pop()
-            if not group.breakables:
-                self.group_queue.remove(group)
-            if close:
-                self.text(close)
+
+    def end_group(self, dedent=0, close=""):
+        """See begin_group()."""
+        self.indentation -= dedent
+        group = self.group_stack.pop()
+        if not group.breakables:
+            self.group_queue.remove(group)
+        if close:
+            self.text(close)
 
     def _enumerate(self, seq):
         """Like enumerate, but with an upper limit on the number of items."""
@@ -341,18 +373,38 @@ class RepresentationPrinter:
         self.flush()
         return self.output.getvalue()
 
-    def repr_call(self, func_name, args, kwargs, *, force_split=None):
+    def repr_call(
+        self,
+        func_name,
+        args,
+        kwargs,
+        *,
+        force_split=None,
+        arg_slices=None,
+        leading_comment=None,
+    ):
         """Helper function to represent a function call.
 
         - func_name, args, and kwargs should all be pretty obvious.
         - If split_lines, we'll force one-argument-per-line; otherwise we'll place
           calls that fit on a single line (and split otherwise).
+        - arg_slices is a mapping from pos-idx or keyword to (start_idx, end_idx)
+          of the Conjecture buffer, by which we can look up comments to add.
         """
         assert isinstance(func_name, str)
         if func_name.startswith(("lambda:", "lambda ")):
             func_name = f"({func_name})"
         self.text(func_name)
         all_args = [(None, v) for v in args] + list(kwargs.items())
+        comments = {
+            k: self.slice_comments[v]
+            for k, v in (arg_slices or {}).items()
+            if v in self.slice_comments
+        }
+
+        if leading_comment or any(k in comments for k, _ in all_args):
+            # We have to split one arg per line in order to leave comments on them.
+            force_split = True
         if force_split is None:
             # We're OK with printing this call on a single line, but will it fit?
             # If not, we'd rather fall back to one-argument-per-line instead.
@@ -366,6 +418,9 @@ class RepresentationPrinter:
         with self.group(indent=4, open="(", close=""):
             for i, (k, v) in enumerate(all_args):
                 if force_split:
+                    if i == 0 and leading_comment:
+                        self.break_()
+                        self.text(leading_comment)
                     self.break_()
                 else:
                     self.breakable(" " if i else "")
@@ -374,6 +429,10 @@ class RepresentationPrinter:
                 self.pretty(v)
                 if force_split or i + 1 < len(all_args):
                     self.text(",")
+                # Optional comments are used to annotate which-parts-matter
+                comment = comments.get(i) or comments.get(k)
+                if comment:
+                    self.text(f"  # {comment}")
         if all_args and force_split:
             self.break_()
         self.text(")")  # after dedent
@@ -381,7 +440,7 @@ class RepresentationPrinter:
 
 class Printable:
     def output(self, stream, output_width):  # pragma: no cover
-        raise NotImplementedError()
+        raise NotImplementedError
 
 
 class Text(Printable):
@@ -460,7 +519,6 @@ def _seq_pprinter_factory(start, end, basetype):
     """Factory that returns a pprint function useful for sequences.
 
     Used by the default pprint for tuples, dicts, and lists.
-
     """
 
     def inner(obj, p, cycle):
@@ -685,7 +743,7 @@ _type_pprinters = {
     set: _set_pprinter_factory("{", "}", set),
     frozenset: _set_pprinter_factory("frozenset({", "})", frozenset),
     super: _super_pprint,
-    _re_pattern_type: _re_pattern_pprint,
+    re.Pattern: _re_pattern_pprint,
     type: _type_pprint,
     types.FunctionType: _function_pprint,
     types.BuiltinFunctionType: _function_pprint,
@@ -764,7 +822,14 @@ def _repr_dataframe(obj, p, cycle):  # pragma: no cover
 
 
 def _repr_enum(obj, p, cycle):
-    p.text(type(obj).__name__ + "." + obj.name)
+    tname = type(obj).__name__
+    if isinstance(obj, Flag):
+        p.text(
+            " | ".join(f"{tname}.{x.name}" for x in type(obj) if x & obj == x)
+            or f"{tname}({obj.value!r})"  # if no matching members
+        )
+    else:
+        p.text(f"{tname}.{obj.name}")
 
 
 for_type_by_name("collections", "defaultdict", _defaultdict_pprint)

@@ -17,6 +17,7 @@ import pytest
 
 from hypothesis import example, given, strategies as st
 from hypothesis._settings import (
+    HealthCheck,
     Phase,
     Verbosity,
     default_variable,
@@ -33,7 +34,12 @@ from hypothesis.errors import (
 from hypothesis.stateful import RuleBasedStateMachine, rule
 from hypothesis.utils.conventions import not_set
 
-from tests.common.utils import counts_calls, fails_with
+from tests.common.utils import (
+    checks_deprecated_behaviour,
+    counts_calls,
+    fails_with,
+    validate_deprecation,
+)
 
 
 def test_has_docstrings():
@@ -198,7 +204,7 @@ def test_database_type_must_be_ExampleDatabase(db, bad_db):
 
 def test_cannot_define_settings_once_locked():
     with pytest.raises(InvalidState):
-        settings._define_setting("hi", "there", 4)
+        settings._define_setting("hi", "there", default=4)
 
 
 def test_cannot_assign_default():
@@ -273,14 +279,14 @@ if __name__ == '__main__':
     set_hypothesis_home_dir(new_home)
     db = settings.default.database
     assert isinstance(db, DirectoryBasedExampleDatabase), db
-    assert db.path.startswith(new_home), (db.path, new_home)
+    # TODO: use .is_relative_to() when we drop Python 3.8
+    assert str(db.path).startswith(new_home), (db.path, new_home)
 """
 
 
-def test_puts_the_database_in_the_home_dir_by_default(tmpdir):
-    script = tmpdir.join("assertlocation.py")
-    script.write(ASSERT_DATABASE_PATH)
-
+def test_puts_the_database_in_the_home_dir_by_default(tmp_path):
+    script = tmp_path.joinpath("assertlocation.py")
+    script.write_text(ASSERT_DATABASE_PATH, encoding="utf-8")
     subprocess.check_call([sys.executable, str(script)])
 
 
@@ -339,19 +345,25 @@ def test_deadline_given_none():
 def test_deadline_given_valid_int():
     x = settings(deadline=1000).deadline
     assert isinstance(x, datetime.timedelta)
-    assert x.days == 0 and x.seconds == 1 and x.microseconds == 0
+    assert x.days == 0
+    assert x.seconds == 1
+    assert x.microseconds == 0
 
 
 def test_deadline_given_valid_float():
     x = settings(deadline=2050.25).deadline
     assert isinstance(x, datetime.timedelta)
-    assert x.days == 0 and x.seconds == 2 and x.microseconds == 50250
+    assert x.days == 0
+    assert x.seconds == 2
+    assert x.microseconds == 50250
 
 
 def test_deadline_given_valid_timedelta():
     x = settings(deadline=datetime.timedelta(days=1, microseconds=15030000)).deadline
     assert isinstance(x, datetime.timedelta)
-    assert x.days == 1 and x.seconds == 15 and x.microseconds == 30000
+    assert x.days == 1
+    assert x.seconds == 15
+    assert x.microseconds == 30000
 
 
 @pytest.mark.parametrize(
@@ -414,13 +426,12 @@ def test_settings_decorator_applied_to_non_state_machine_class_raises_error():
 
 
 def test_assigning_to_settings_attribute_on_state_machine_raises_error():
+    class StateMachine(RuleBasedStateMachine):
+        @rule(x=st.none())
+        def a_rule(self, x):
+            assert x is None
+
     with pytest.raises(AttributeError):
-
-        class StateMachine(RuleBasedStateMachine):
-            @rule(x=st.none())
-            def a_rule(self, x):
-                assert x is None
-
         StateMachine.settings = settings()
 
     state_machine_instance = StateMachine()
@@ -464,7 +475,7 @@ def test_invalid_parent():
 
 
 def test_show_changed():
-    s = settings(max_examples=999, database=None, phases=tuple(Phase)[:-1])
+    s = settings(max_examples=999, database=None)
     assert s.show_changed() == "database=None, max_examples=999"
 
 
@@ -482,3 +493,19 @@ def test_note_deprecation_checks_has_codemod():
         match="The `hypothesis codemod` command-line tool",
     ):
         note_deprecation("This is bad", since="2021-01-01", has_codemod=True)
+
+
+def test_deprecated_settings_warn_on_set_settings():
+    with validate_deprecation():
+        settings(suppress_health_check=[HealthCheck.return_value])
+    with validate_deprecation():
+        settings(suppress_health_check=[HealthCheck.not_a_test_method])
+
+
+@checks_deprecated_behaviour
+def test_deprecated_settings_not_in_settings_all_list():
+    al = HealthCheck.all()
+    ls = list(HealthCheck)
+    assert al == ls
+    assert HealthCheck.return_value not in ls
+    assert HealthCheck.not_a_test_method not in ls

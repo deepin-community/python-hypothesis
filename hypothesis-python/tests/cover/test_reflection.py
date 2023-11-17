@@ -540,7 +540,7 @@ def test_required_args(target, args, kwargs, expected):
 
 
 # fmt: off
-pi = "π"; is_str_pi = lambda x: x == pi  # noqa: E731
+pi = "π"; is_str_pi = lambda x: x == pi  # noqa: E702
 # fmt: on
 
 
@@ -592,7 +592,7 @@ def test_inline_given_handles_self():
 def logged(f):
     @wraps(f)
     def wrapper(*a, **kw):
-        print("I was called")
+        # print("I was called")
         return f(*a, **kw)
 
     return wrapper

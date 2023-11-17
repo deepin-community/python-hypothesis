@@ -20,11 +20,11 @@ from hypothesis.errors import (
     HypothesisDeprecationWarning,
     InvalidArgument,
     ResolutionFailed,
+    SmallSearchSpaceWarning,
 )
 from hypothesis.internal.compat import get_type_hints
 from hypothesis.internal.reflection import get_pretty_function_description
 from hypothesis.strategies._internal import types
-from hypothesis.strategies._internal.core import _from_type
 from hypothesis.strategies._internal.types import _global_type_lookup
 from hypothesis.strategies._internal.utils import _strategies
 
@@ -95,10 +95,19 @@ def test_lookup_keys_are_types():
     assert "int" not in types._global_type_lookup
 
 
-def test_lookup_values_are_strategies():
+@pytest.mark.parametrize(
+    "typ, not_a_strategy",
+    [
+        (int, 42),  # Values must be strategies
+        # Can't register NotImplemented directly, even though strategy functions
+        # can return it.
+        (int, NotImplemented),
+    ],
+)
+def test_lookup_values_are_strategies(typ, not_a_strategy):
     with pytest.raises(InvalidArgument):
-        st.register_type_strategy(int, 42)
-    assert 42 not in types._global_type_lookup.values()
+        st.register_type_strategy(typ, not_a_strategy)
+    assert not_a_strategy not in types._global_type_lookup.values()
 
 
 @pytest.mark.parametrize("typ", sorted(types_with_core_strat, key=str))
@@ -145,6 +154,24 @@ def test_custom_type_resolution_with_function_non_strategy():
             st.from_type(UnknownType).example()
         with pytest.raises(ResolutionFailed):
             st.from_type(ParentUnknownType).example()
+
+
+@pytest.mark.parametrize("strategy_returned", [True, False])
+def test_conditional_type_resolution_with_function(strategy_returned):
+    sentinel = object()
+
+    def resolve_strategy(thing):
+        assert thing == UnknownType
+        if strategy_returned:
+            return st.just(sentinel)
+        return NotImplemented
+
+    with temp_registered(UnknownType, resolve_strategy):
+        if strategy_returned:
+            assert st.from_type(UnknownType).example() is sentinel
+        else:
+            with pytest.raises(ResolutionFailed):
+                st.from_type(UnknownType).example()
 
 
 def test_errors_if_generic_resolves_empty():
@@ -205,12 +232,17 @@ def test_uninspectable_builds():
 
 def test_uninspectable_from_type():
     with pytest.raises(TypeError, match="object is not callable"):
-        st.from_type(BrokenClass).example()
+        with pytest.warns(SmallSearchSpaceWarning):
+            st.from_type(BrokenClass).example()
 
 
 def _check_instances(t):
     # See https://github.com/samuelcolvin/pydantic/discussions/2508
-    return t.__module__ != "typing" and not t.__module__.startswith("pydantic")
+    return (
+        t.__module__ != "typing"
+        and t.__name__ != "ByteString"
+        and not t.__module__.startswith("pydantic")
+    )
 
 
 @pytest.mark.parametrize(
@@ -334,7 +366,7 @@ def test_generic_origin_concrete_builds():
 
 
 class AbstractFoo(abc.ABC):
-    def __init__(self, x):
+    def __init__(self, x):  # noqa: B027
         pass
 
     @abc.abstractmethod
@@ -364,7 +396,7 @@ def test_gen_abstract(foo):
 
 
 class AbstractBar(abc.ABC):
-    def __init__(self, x):
+    def __init__(self, x):  # noqa: B027
         pass
 
     @abc.abstractmethod
@@ -379,7 +411,7 @@ class ConcreteBar(AbstractBar):
 
 def test_abstract_resolver_fallback():
     # We create our distinct strategies for abstract and concrete types
-    gen_abstractbar = _from_type(AbstractBar)
+    gen_abstractbar = st.from_type(AbstractBar)
     gen_concretebar = st.builds(ConcreteBar, x=st.none())
     assert gen_abstractbar != gen_concretebar
 

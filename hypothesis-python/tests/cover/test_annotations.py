@@ -14,6 +14,7 @@ import attr
 import pytest
 
 from hypothesis import given, strategies as st
+from hypothesis.errors import SmallSearchSpaceWarning
 from hypothesis.internal.reflection import (
     convert_positional_arguments,
     define_function_signature,
@@ -83,7 +84,7 @@ def test_converter_notices_missing_kwonly_args():
         assert convert_positional_arguments(f, (), {})
 
 
-def to_wrap_with_composite(draw: None, strat: bool, nothing: list) -> int:
+def to_wrap_with_composite(draw: None, strat: float, nothing: list) -> int:
     return draw(st.none())
 
 
@@ -124,6 +125,7 @@ def test_attrs_inference_builds(c):
     pass
 
 
-@given(st.from_type(Inferrables))
-def test_attrs_inference_from_type(c):
-    pass
+def test_attrs_inference_from_type():
+    s = st.from_type(Inferrables)
+    with pytest.warns(SmallSearchSpaceWarning):
+        s.example()

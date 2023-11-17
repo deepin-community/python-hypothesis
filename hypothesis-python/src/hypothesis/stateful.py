@@ -23,6 +23,7 @@ from io import StringIO
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Dict,
     Iterable,
     List,
@@ -87,7 +88,7 @@ class TestCaseProperty:  # pragma: no cover
         raise AttributeError("Cannot delete TestCase")
 
 
-def run_state_machine_as_test(state_machine_factory, *, settings=None):
+def run_state_machine_as_test(state_machine_factory, *, settings=None, _min_steps=0):
     """Run a state machine definition as a test, either silently doing nothing
     or printing a minimal breaking program and raising an exception.
 
@@ -100,8 +101,13 @@ def run_state_machine_as_test(state_machine_factory, *, settings=None):
             settings = state_machine_factory.TestCase.settings
             check_type(Settings, settings, "state_machine_factory.TestCase.settings")
         except AttributeError:
-            settings = Settings(deadline=None, suppress_health_check=HealthCheck.all())
+            settings = Settings(deadline=None, suppress_health_check=list(HealthCheck))
     check_type(Settings, settings, "settings")
+    check_type(int, _min_steps, "_min_steps")
+    if _min_steps < 0:
+        # Because settings can vary via e.g. profiles, settings.stateful_step_count
+        # overrides this argument and we don't bother cross-validating.
+        raise InvalidArgument(f"_min_steps={_min_steps} must be non-negative.")
 
     @settings
     @given(st.data())
@@ -129,24 +135,13 @@ def run_state_machine_as_test(state_machine_factory, *, settings=None):
                 # 2 ** -16 during normal operation but force a stop when we've
                 # generated enough steps.
                 cd.start_example(STATE_MACHINE_RUN_LABEL)
-                if steps_run == 0:
-                    cd.draw_bits(16, forced=1)
-                elif steps_run >= max_steps:
-                    cd.draw_bits(16, forced=0)
+                must_stop = None
+                if steps_run >= max_steps:
+                    must_stop = True
+                elif steps_run <= _min_steps:
+                    must_stop = False
+                if cu.biased_coin(cd, 2**-16, forced=must_stop):
                     break
-                else:
-                    # All we really care about is whether this value is zero
-                    # or non-zero, so if it's > 1 we discard it and insert a
-                    # replacement value after
-                    cd.start_example(SHOULD_CONTINUE_LABEL)
-                    should_continue_value = cd.draw_bits(16)
-                    if should_continue_value > 1:
-                        cd.stop_example(discard=True)
-                        cd.draw_bits(16, forced=int(bool(should_continue_value)))
-                    else:
-                        cd.stop_example()
-                        if should_continue_value == 0:
-                            break
                 steps_run += 1
 
                 # Choose a rule to run, preferring an initialize rule if there are
@@ -226,11 +221,9 @@ class StateMachineMeta(type):
     def __setattr__(cls, name, value):
         if name == "settings" and isinstance(value, Settings):
             raise AttributeError(
-                (
-                    "Assigning {cls}.settings = {value} does nothing. Assign "
-                    "to {cls}.TestCase.settings, or use @{value} as a decorator "
-                    "on the {cls} class."
-                ).format(cls=cls.__name__, value=value)
+                f"Assigning {cls.__name__}.settings = {value} does nothing. Assign "
+                f"to {cls.__name__}.TestCase.settings, or use @{value} as a decorator "
+                f"on the {cls.__name__} class."
             )
         return super().__setattr__(name, value)
 
@@ -245,9 +238,9 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
     executed.
     """
 
-    _rules_per_class: Dict[type, List[classmethod]] = {}
-    _invariants_per_class: Dict[type, List[classmethod]] = {}
-    _initializers_per_class: Dict[type, List[classmethod]] = {}
+    _rules_per_class: ClassVar[Dict[type, List[classmethod]]] = {}
+    _invariants_per_class: ClassVar[Dict[type, List[classmethod]]] = {}
+    _initializers_per_class: ClassVar[Dict[type, List[classmethod]]] = {}
 
     def __init__(self) -> None:
         if not self.rules():
@@ -393,10 +386,10 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
     TestCase = TestCaseProperty()
 
     @classmethod
-    @lru_cache()
+    @lru_cache
     def _to_test_case(cls):
         class StateMachineTestCase(TestCase):
-            settings = Settings(deadline=None, suppress_health_check=HealthCheck.all())
+            settings = Settings(deadline=None, suppress_health_check=list(HealthCheck))
 
             def runTest(self):
                 run_state_machine_as_test(cls)
@@ -424,7 +417,7 @@ class Rule:
             if isinstance(v, Bundle):
                 bundles.append(v)
                 consume = isinstance(v, BundleConsumer)
-                arguments[k] = BundleReferenceStrategy(v.name, consume)
+                arguments[k] = BundleReferenceStrategy(v.name, consume=consume)
             else:
                 arguments[k] = v
         self.bundles = tuple(bundles)
@@ -435,7 +428,7 @@ self_strategy = st.runner()
 
 
 class BundleReferenceStrategy(SearchStrategy):
-    def __init__(self, name, consume=False):
+    def __init__(self, name: str, *, consume: bool = False):
         self.name = name
         self.consume = consume
 
@@ -449,15 +442,15 @@ class BundleReferenceStrategy(SearchStrategy):
         # end there can be a lot of hard to remove padding.
         position = cu.integer_range(data, 0, len(bundle) - 1, center=len(bundle))
         if self.consume:
-            return bundle.pop(position)
+            return bundle.pop(position)  # pragma: no cover  # coverage is flaky here
         else:
             return bundle[position]
 
 
 class Bundle(SearchStrategy[Ex]):
-    def __init__(self, name: str, consume: bool = False) -> None:
+    def __init__(self, name: str, *, consume: bool = False) -> None:
         self.name = name
-        self.__reference_strategy = BundleReferenceStrategy(name, consume)
+        self.__reference_strategy = BundleReferenceStrategy(name, consume=consume)
 
     def do_draw(self, data):
         machine = data.draw(self_strategy)
@@ -468,7 +461,7 @@ class Bundle(SearchStrategy[Ex]):
         consume = self.__reference_strategy.consume
         if consume is False:
             return f"Bundle(name={self.name!r})"
-        return f"Bundle(name={self.name!r}, consume={consume!r})"
+        return f"Bundle(name={self.name!r}, {consume=})"
 
     def calc_is_empty(self, recur):
         # We assume that a bundle will grow over time
@@ -531,7 +524,7 @@ def _convert_targets(targets, target):
         if targets:
             raise InvalidArgument(
                 "Passing both targets=%r and target=%r is redundant - pass "
-                "targets=%r instead." % (targets, target, tuple(targets) + (target,))
+                "targets=%r instead." % (targets, target, (*targets, target))
             )
         targets = (target,)
 
@@ -555,6 +548,7 @@ def _convert_targets(targets, target):
                     "This will be an error in a future version of Hypothesis.",
                     since="2021-09-08",
                     has_codemod=False,
+                    stacklevel=2,
                 )
             t = t.name
         converted_targets.append(t)
@@ -807,19 +801,19 @@ def precondition(precond: Callable[[Any], bool]) -> Callable[[TestFunc], TestFun
         invariant = getattr(f, INVARIANT_MARKER, None)
         if rule is not None:
             assert invariant is None
-            new_rule = attr.evolve(rule, preconditions=rule.preconditions + (precond,))
+            new_rule = attr.evolve(rule, preconditions=(*rule.preconditions, precond))
             setattr(precondition_wrapper, RULE_MARKER, new_rule)
         elif invariant is not None:
             assert rule is None
             new_invariant = attr.evolve(
-                invariant, preconditions=invariant.preconditions + (precond,)
+                invariant, preconditions=(*invariant.preconditions, precond)
             )
             setattr(precondition_wrapper, INVARIANT_MARKER, new_invariant)
         else:
             setattr(
                 precondition_wrapper,
                 PRECONDITIONS_MARKER,
-                getattr(f, PRECONDITIONS_MARKER, ()) + (precond,),
+                (*getattr(f, PRECONDITIONS_MARKER, ()), precond),
             )
 
         return precondition_wrapper
@@ -913,10 +907,7 @@ class RuleStrategy(SearchStrategy):
         )
 
     def __repr__(self):
-        return "{}(machine={}({{...}}))".format(
-            self.__class__.__name__,
-            self.machine.__class__.__name__,
-        )
+        return f"{self.__class__.__name__}(machine={self.machine.__class__.__name__}({{...}}))"
 
     def do_draw(self, data):
         if not any(self.is_valid(rule) for rule in self.rules):

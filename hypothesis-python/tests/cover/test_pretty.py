@@ -50,7 +50,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import re
 import warnings
 from collections import Counter, OrderedDict, defaultdict, deque
-from enum import Enum
+from enum import Enum, Flag
 
 import pytest
 
@@ -271,7 +271,7 @@ def test_bad_repr():
 
 class BadException(Exception):
     def __str__(self):
-        return -1
+        return -1  # noqa
 
 
 class ReallyBadRepr:
@@ -282,7 +282,7 @@ class ReallyBadRepr:
         raise ValueError("I am horrible")
 
     def __repr__(self):
-        raise BadException()
+        raise BadException
 
 
 def test_really_bad_repr():
@@ -453,6 +453,7 @@ def test_collections_deque():
 
     cases = [
         (deque(), "deque([])"),
+        (deque([1, 2, 3]), "deque([1, 2, 3])"),
         (
             deque(i for i in range(1000, 1020)),
             "deque([1000,\n"
@@ -578,7 +579,8 @@ def test_re_evals():
         re.compile("foo", re.MULTILINE | re.UNICODE),
     ]:
         r2 = eval(pretty.pretty(r), globals())
-        assert r.pattern == r2.pattern and r.flags == r2.flags
+        assert r.pattern == r2.pattern
+        assert r.flags == r2.flags
 
 
 def test_print_builtin_function():
@@ -627,5 +629,57 @@ class AnEnum(Enum):
     SOME_MEMBER = 1
 
 
-def test_pretty_prints_enums_as_code():
-    assert pretty.pretty(AnEnum.SOME_MEMBER) == "AnEnum.SOME_MEMBER"
+class Options(Flag):
+    A = 1
+    B = 2
+    C = 4
+
+
+class EvilReprOptions(Flag):
+    A = 1
+    B = 2
+
+    def __repr__(self):
+        return "can't parse this nonsense"
+
+
+class LyingReprOptions(Flag):
+    A = 1
+    B = 2
+
+    def __repr__(self):
+        return "LyingReprOptions.A|B|C"
+
+
+@pytest.mark.parametrize(
+    "rep",
+    [
+        "AnEnum.SOME_MEMBER",
+        "Options.A",
+        "Options.A | Options.B",
+        "Options.A | Options.B | Options.C",
+        "Options(0)",
+        "EvilReprOptions.A",
+        "LyingReprOptions.A",
+        "EvilReprOptions.A | EvilReprOptions.B",
+        "LyingReprOptions.A | LyingReprOptions.B",
+    ],
+)
+def test_pretty_prints_enums_as_code(rep):
+    assert pretty.pretty(eval(rep)) == rep
+
+
+class Obj:
+    def _repr_pretty_(self, p, cycle):
+        """Exercise the IPython callback interface."""
+        assert not cycle
+        with p.indent(2):
+            p.text("abc,")
+            p.breakable(" ")
+            p.break_()
+        p.begin_group(8, "<")
+        p.end_group(8, ">")
+
+
+def test_supports_ipython_callback():
+    assert pretty.pretty(Obj()) == "abc, \n  <>"

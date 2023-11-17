@@ -9,9 +9,9 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import math
-import statistics
 from collections import Counter
 
+from hypothesis._settings import Phase
 from hypothesis.utils.dynamicvariables import DynamicVariable
 
 collector = DynamicVariable(None)
@@ -33,12 +33,30 @@ def describe_targets(best_targets):
         return []
     elif len(best_targets) == 1:
         label, score = next(iter(best_targets.items()))
-        return [f"Highest target score: {score:g}  (label={label!r})"]
+        return [f"Highest target score: {score:g}  ({label=})"]
     else:
         lines = ["Highest target scores:"]
         for label, score in sorted(best_targets.items(), key=lambda x: x[::-1]):
-            lines.append(f"{score:>16g}  (label={label!r})")
+            lines.append(f"{score:>16g}  ({label=})")
         return lines
+
+
+def format_ms(times):
+    """Format `times` into a string representing approximate milliseconds.
+
+    `times` is a collection of durations in seconds.
+    """
+    ordered = sorted(times)
+    n = len(ordered) - 1
+    assert n >= 0
+    lower = int(ordered[int(math.floor(n * 0.05))] * 1000)
+    upper = int(ordered[int(math.ceil(n * 0.95))] * 1000)
+    if upper == 0:
+        return "< 1ms"
+    elif lower == upper:
+        return f"~ {lower}ms"
+    else:
+        return f"~ {lower}-{upper} ms"
 
 
 def describe_statistics(stats_dict):
@@ -56,29 +74,18 @@ def describe_statistics(stats_dict):
     """
     lines = [stats_dict["nodeid"] + ":\n"] if "nodeid" in stats_dict else []
     prev_failures = 0
-    for phase in ["reuse", "generate", "shrink"]:
+    for phase in (p.name for p in list(Phase)[1:]):
         d = stats_dict.get(phase + "-phase", {})
         # Basic information we report for every phase
         cases = d.get("test-cases", [])
         if not cases:
             continue
         statuses = Counter(t["status"] for t in cases)
-        runtimes = sorted(t["runtime"] for t in cases)
-        n = max(0, len(runtimes) - 1)
-        lower = int(runtimes[int(math.floor(n * 0.05))] * 1000)
-        upper = int(runtimes[int(math.ceil(n * 0.95))] * 1000)
-        if upper == 0:
-            ms = "< 1ms"
-        elif lower == upper:
-            ms = f"~ {lower}ms"
-        else:
-            ms = f"{lower}-{upper} ms"
-        drawtime_percent = 100 * statistics.mean(
-            t["drawtime"] / t["runtime"] if t["runtime"] > 0 else 0 for t in cases
-        )
+        runtime_ms = format_ms(t["runtime"] for t in cases)
+        drawtime_ms = format_ms(t["drawtime"] for t in cases)
         lines.append(
             f"  - during {phase} phase ({d['duration-seconds']:.2f} seconds):\n"
-            f"    - Typical runtimes: {ms}, ~ {drawtime_percent:.0f}% in data generation\n"
+            f"    - Typical runtimes: {runtime_ms}, of which {drawtime_ms} in data generation\n"
             f"    - {statuses['valid']} passing examples, {statuses['interesting']} "
             f"failing examples, {statuses['invalid'] + statuses['overrun']} invalid examples"
         )

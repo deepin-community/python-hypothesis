@@ -182,11 +182,11 @@ and then tell ``setuptools`` that this is your ``"hypothesis"`` entry point:
 
 And that's all it takes!
 
-.. note::
-    On Python 3.7, where the ``importlib.metadata`` module
-    is not in the standard library, loading entry points requires either the
-    :pypi:`importlib_metadata` (preferred) or :pypi:`setuptools` (fallback)
-    package to be installed.
+.. envvar:: HYPOTHESIS_NO_PLUGINS
+
+   If set, disables automatic loading of all hypothesis plugins. This is probably only
+   useful for our own self-tests, but documented in case it might help narrow down
+   any particularly weird bugs in complex environments.
 
 
 Interaction with :pypi:`pytest-cov`

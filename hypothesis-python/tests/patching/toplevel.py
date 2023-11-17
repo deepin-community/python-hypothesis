@@ -8,16 +8,16 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import sys
+"""A stable file for which we can write patches.  Don't move stuff around!"""
 
-from hypothesis.version import __version__
+from pathlib import Path
 
-message = """
-Hypothesis {} requires Python 3.7 or later.
+import hypothesis
+import hypothesis.strategies as st
 
-This can only happen if your packaging toolchain is older than python_requires.
-See https://packaging.python.org/guides/distributing-packages-using-setuptools/
-"""
+WHERE_TOP = Path(__file__).relative_to(Path.cwd())
 
-if sys.version_info[:2] < (3, 7):
-    raise Exception(message.format(__version__))
+
+@hypothesis.given(st.integers())
+def fn_top(x):
+    """A trivial test function."""

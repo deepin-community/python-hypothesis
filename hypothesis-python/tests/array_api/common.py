@@ -9,7 +9,7 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 from importlib.metadata import EntryPoint, entry_points  # type: ignore
-from typing import Dict
+from typing import Dict, Literal
 
 import pytest
 
@@ -22,15 +22,14 @@ from hypothesis.extra.array_api import (
 from hypothesis.internal.floats import next_up
 
 __all__ = [
-    "MIN_VER_FOR_COMPLEX:",
+    "MIN_VER_FOR_COMPLEX",
     "installed_array_modules",
     "flushes_to_zero",
     "dtype_name_params",
 ]
 
 
-# This should be updated to the next spec release, which should include complex numbers
-MIN_VER_FOR_COMPLEX: NominalVersion = "draft"
+MIN_VER_FOR_COMPLEX: NominalVersion = "2022.12"
 if len(RELEASED_VERSIONS) > 1:
     assert MIN_VER_FOR_COMPLEX == RELEASED_VERSIONS[1]
 
@@ -53,7 +52,7 @@ def installed_array_modules() -> Dict[str, EntryPoint]:
     return {ep.name: ep for ep in eps}
 
 
-def flushes_to_zero(xp, width: int) -> bool:
+def flushes_to_zero(xp, width: Literal[32, 64]) -> bool:
     """Infer whether build of array module has its float dtype of the specified
     width flush subnormals to zero
 
@@ -66,7 +65,7 @@ def flushes_to_zero(xp, width: int) -> bool:
     return bool(xp.asarray(next_up(0.0, width=width), dtype=dtype) == 0)
 
 
-dtype_name_params = ["bool"] + list(REAL_NAMES)
+dtype_name_params = ["bool", *REAL_NAMES]
 for name in COMPLEX_NAMES:
     param = pytest.param(name, marks=pytest.mark.xp_min_version(MIN_VER_FOR_COMPLEX))
     dtype_name_params.append(param)

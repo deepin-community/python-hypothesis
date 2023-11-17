@@ -8,6 +8,7 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import os
 import subprocess
 import sys
 
@@ -42,7 +43,9 @@ def test_hypothesis_does_not_import_test_runners(tmp_path):
     # It's unclear which of our dependencies is importing unittest, but
     # since I doubt it's causing any spurious failures I don't really care.
     # See https://github.com/HypothesisWorks/hypothesis/pull/2204
-    fname = str(tmp_path / "test.py")
-    with open(fname, "w") as f:
-        f.write(SHOULD_NOT_IMPORT_TEST_RUNNERS)
-    subprocess.check_call([sys.executable, fname])
+    fname = tmp_path / "test.py"
+    fname.write_text(SHOULD_NOT_IMPORT_TEST_RUNNERS, encoding="utf-8")
+    subprocess.check_call(
+        [sys.executable, str(fname)],
+        env={**os.environ, "HYPOTHESIS_NO_PLUGINS": "1"},
+    )

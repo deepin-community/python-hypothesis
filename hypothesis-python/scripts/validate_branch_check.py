@@ -13,7 +13,7 @@ import sys
 from collections import defaultdict
 
 if __name__ == "__main__":
-    with open("branch-check") as i:
+    with open("branch-check", encoding="utf-8") as i:
         data = [json.loads(l) for l in i]
 
     checks = defaultdict(set)
@@ -30,7 +30,7 @@ if __name__ == "__main__":
 
     for c, vs in sorted(checks.items()):
         if len(vs) < 2:
-            v = list(vs)[0]
+            v = next(iter(vs))
             assert v in (False, True)
             if v:
                 always_true.append(c)

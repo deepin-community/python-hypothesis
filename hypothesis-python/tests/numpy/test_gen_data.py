@@ -70,10 +70,10 @@ def test_can_minimize_large_arrays():
 
 
 @flaky(max_runs=50, min_passes=1)
-@np.errstate(over="ignore", invalid="ignore")
 def test_can_minimize_float_arrays():
-    x = minimal(nps.arrays(float, 50), lambda t: np.nansum(t) >= 1.0)
-    assert x.sum() in (1, 50)
+    with np.errstate(over="ignore", invalid="ignore"):
+        x = minimal(nps.arrays(float, 50), lambda t: np.nansum(t) >= 1.0)
+        assert x.sum() in (1, 50)
 
 
 class Foo:
@@ -134,7 +134,8 @@ def test_minimise_array_shapes(min_dims, dim_range, min_side, side_range):
             max_side=min_side + side_range,
         )
     )
-    assert len(smallest) == min_dims and all(k == min_side for k in smallest)
+    assert len(smallest) == min_dims
+    assert all(k == min_side for k in smallest)
 
 
 @pytest.mark.parametrize(
@@ -194,7 +195,8 @@ def test_minimise_array_strategy():
             nps.array_shapes(max_dims=3, max_side=3),
         )
     )
-    assert smallest.dtype == np.dtype("bool") and not smallest.any()
+    assert smallest.dtype == np.dtype("bool")
+    assert not smallest.any()
 
 
 @given(nps.array_dtypes(allow_subarrays=False))
@@ -437,7 +439,7 @@ def test_unique_array_with_fill_can_use_all_elements(arr):
 @given(nps.arrays(dtype="uint8", shape=25, unique=True, fill=st.nothing()))
 def test_unique_array_without_fill(arr):
     # This test covers the collision-related branches for fully dense unique arrays.
-    # Choosing 25 of 256 possible elements means we're almost certain to see colisions
+    # Choosing 25 of 256 possible elements means we're almost certain to see collisions
     # thanks to the 'birthday paradox', but finding unique elemennts is still easy.
     assume(len(set(arr)) == arr.size)
 
@@ -475,7 +477,8 @@ def test_minimize_tuple_axes(ndim, data):
     min_size = data.draw(st.integers(0, ndim), label="min_size")
     max_size = data.draw(st.integers(min_size, ndim), label="max_size")
     smallest = minimal(nps.valid_tuple_axes(ndim, min_size=min_size, max_size=max_size))
-    assert len(smallest) == min_size and all(k > -1 for k in smallest)
+    assert len(smallest) == min_size
+    assert all(k > -1 for k in smallest)
 
 
 @settings(deadline=None, max_examples=10)
@@ -520,9 +523,10 @@ def test_broadcastable_shape_bounds_are_satisfied(shape, data):
         max_dims = max(len(shape), min_dims) + 2
 
     if max_side is None:
-        max_side = max(tuple(shape[::-1][:max_dims]) + (min_side,)) + 2
+        max_side = max((*shape[::-1][:max_dims], min_side)) + 2
 
-    assert isinstance(bshape, tuple) and all(isinstance(s, int) for s in bshape)
+    assert isinstance(bshape, tuple)
+    assert all(isinstance(s, int) for s in bshape)
     assert min_dims <= len(bshape) <= max_dims
     assert all(min_side <= s <= max_side for s in bshape)
 
@@ -559,19 +563,20 @@ def test_mutually_broadcastable_shape_bounds_are_satisfied(
         max_dims = max(len(base_shape), min_dims) + 2
 
     if max_side is None:
-        max_side = max(tuple(base_shape[::-1][:max_dims]) + (min_side,)) + 2
+        max_side = max((*base_shape[::-1][:max_dims], min_side)) + 2
 
     assert isinstance(shapes, tuple)
     assert isinstance(result, tuple)
     assert all(isinstance(s, int) for s in result)
 
     for bshape in shapes:
-        assert isinstance(bshape, tuple) and all(isinstance(s, int) for s in bshape)
+        assert isinstance(bshape, tuple)
+        assert all(isinstance(s, int) for s in bshape)
         assert min_dims <= len(bshape) <= max_dims
         assert all(min_side <= s <= max_side for s in bshape)
 
 
-def _draw_valid_bounds(data, shape, max_dims, permit_none=True):
+def _draw_valid_bounds(data, shape, max_dims, *, permit_none=True):
     if max_dims == 0 or not shape:
         return 0, None
 
@@ -801,7 +806,8 @@ def test_mutually_broadcastable_shape_adjusts_max_dim_with_default_bounds(
         )
     except InvalidArgument:
         # There is no satisfiable `max_dims` for us to tune
-        assert min_dims == 4 and (max_side == 3 or base_shape[0] == 0)
+        assert min_dims == 4
+        assert max_side == 3 or base_shape[0] == 0
         return
 
     if max_side == 3 or base_shape[0] == 0:
@@ -869,6 +875,7 @@ def test_mutually_broadcastable_shapes_shrinking_with_singleton_out_of_bounds(
         assert smallest == (min_side,) * min_dims
 
 
+@settings(suppress_health_check=[HealthCheck.too_slow])
 @given(
     num_shapes=st.integers(1, 4),
     min_dims=st.integers(1, 32),
@@ -1073,7 +1080,7 @@ def test_advanced_integer_index_minimizes_as_documented(
 )
 def test_advanced_integer_index_can_generate_any_pattern(shape, data):
     # ensures that generated index-arrays can be used to yield any pattern of elements from an array
-    x = np.arange(np.product(shape)).reshape(shape)
+    x = np.arange(np.prod(shape)).reshape(shape)
 
     target_array = data.draw(
         nps.arrays(

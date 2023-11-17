@@ -29,7 +29,7 @@ def test_fails_only_once_is_flaky():
     def rude(x):
         if first_call[0]:
             first_call[0] = False
-            raise Nope()
+            raise Nope
 
     with pytest.raises(Flaky):
         rude()
@@ -101,7 +101,7 @@ def test_failure_sequence_inducing(building, testing, rnd):
     @settings(
         verbosity=Verbosity.quiet,
         database=None,
-        suppress_health_check=HealthCheck.all(),
+        suppress_health_check=list(HealthCheck),
         phases=no_shrink,
     )
     def test(x):
@@ -114,11 +114,11 @@ def test_failure_sequence_inducing(building, testing, rnd):
         elif i == 2:
             reject()
         else:
-            raise Nope()
+            raise Nope
 
     try:
         test()
     except (Nope, Unsatisfiable, Flaky):
         pass
     except UnsatisfiedAssumption:
-        raise SatisfyMe() from None
+        raise SatisfyMe from None

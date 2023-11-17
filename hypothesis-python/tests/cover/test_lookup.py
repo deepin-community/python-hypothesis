@@ -11,27 +11,37 @@
 import abc
 import builtins
 import collections
+import contextlib
 import datetime
 import enum
 import inspect
 import io
+import random
 import re
 import string
 import sys
 import typing
+import warnings
+from dataclasses import dataclass
 from inspect import signature
 from numbers import Real
 
 import pytest
 
 from hypothesis import HealthCheck, assume, given, settings, strategies as st
-from hypothesis.errors import InvalidArgument, ResolutionFailed
-from hypothesis.internal.compat import get_type_hints
+from hypothesis.errors import InvalidArgument, ResolutionFailed, SmallSearchSpaceWarning
+from hypothesis.internal.compat import PYPY, get_type_hints
+from hypothesis.internal.conjecture.junkdrawer import stack_depth_of_caller
 from hypothesis.internal.reflection import get_pretty_function_description
 from hypothesis.strategies import from_type
 from hypothesis.strategies._internal import types
 
-from tests.common.debug import assert_all_examples, find_any, minimal
+from tests.common.debug import (
+    assert_all_examples,
+    assert_no_examples,
+    find_any,
+    minimal,
+)
 from tests.common.utils import fails_with, temp_registered
 
 sentinel = object()
@@ -45,7 +55,9 @@ generics = sorted(
         t
         for t in types._global_type_lookup
         # We ignore TypeVar, because it is not a Generic type:
-        if isinstance(t, types.typing_root_type) and t != typing.TypeVar
+        if isinstance(t, types.typing_root_type)
+        and t != typing.TypeVar
+        and (sys.version_info[:2] <= (3, 11) or t != typing.ByteString)
     ),
     key=str,
 )
@@ -109,7 +121,11 @@ def test_typing_Type_Union(ex):
 @given(data=st.data())
 def test_rare_types(data, typ):
     ex = data.draw(from_type(typ))
-    assert isinstance(ex, typ)
+    with warnings.catch_warnings():
+        if sys.version_info[:2] >= (3, 12):
+            warnings.simplefilter("ignore", DeprecationWarning)
+        # ByteString is deprecated in Python 3.12
+        assert isinstance(ex, typ)
 
 
 class Elem:
@@ -231,7 +247,10 @@ def test_lookup_overrides_defaults():
 
 def test_register_generic_typing_strats():
     # I don't expect anyone to do this, but good to check it works as expected
-    with temp_registered(typing.Sequence, types._global_type_lookup[typing.Set]):
+    with temp_registered(
+        typing.Sequence,
+        types._global_type_lookup[typing.get_origin(typing.Set) or typing.Set],
+    ):
         # We register sets for the abstract sequence type, which masks subtypes
         # from supertype resolution but not direct resolution
         assert_all_examples(
@@ -317,7 +336,7 @@ def test_distinct_typevars_same_constraint():
     B = typing.TypeVar("B", int, str)
     find_any(
         st.tuples(st.from_type(A), st.from_type(B)),
-        lambda ab: type(ab[0]) != type(ab[1]),  # noqa
+        lambda ab: type(ab[0]) != type(ab[1]),
     )
 
 
@@ -327,7 +346,7 @@ def test_distinct_typevars_distinct_type():
     B = typing.TypeVar("B")
     find_any(
         st.tuples(st.from_type(A), st.from_type(B)),
-        lambda ab: type(ab[0]) != type(ab[1]),  # noqa
+        lambda ab: type(ab[0]) != type(ab[1]),
     )
 
 
@@ -357,6 +376,25 @@ def test_typevars_can_be_redefine_with_factory():
 
     with temp_registered(typing.TypeVar, lambda thing: st.just(thing.__name__)):
         assert_all_examples(st.from_type(A), lambda obj: obj == "A")
+
+
+def test_typevars_can_be_resolved_conditionally():
+    sentinel = object()
+    A = typing.TypeVar("A")
+    B = typing.TypeVar("B")
+
+    def resolve_type_var(thing):
+        assert thing in (A, B)
+        if thing == A:
+            return st.just(sentinel)
+        return NotImplemented
+
+    with temp_registered(typing.TypeVar, resolve_type_var):
+        assert st.from_type(A).example() is sentinel
+        # We've re-defined the default TypeVar resolver, so there is no fallback.
+        # This causes the lookup to fail.
+        with pytest.raises(InvalidArgument):
+            st.from_type(B).example()
 
 
 def annotated_func(a: int, b: int = 2, *, c: int, d: int = 4):
@@ -431,7 +469,8 @@ def test_raises_for_arg_with_unresolvable_annotation():
 
 @given(a=..., b=...)
 def test_can_use_type_hints(a: int, b: float):
-    assert isinstance(a, int) and isinstance(b, float)
+    assert isinstance(a, int)
+    assert isinstance(b, float)
 
 
 def test_error_if_has_unresolvable_hints():
@@ -450,6 +489,24 @@ def test_resolves_NewType():
     assert isinstance(from_type(typ).example(), int)
     assert isinstance(from_type(nested).example(), int)
     assert isinstance(from_type(uni).example(), (int, type(None)))
+
+
+@pytest.mark.parametrize("is_handled", [True, False])
+def test_resolves_NewType_conditionally(is_handled):
+    sentinel = object()
+    typ = typing.NewType("T", int)
+
+    def resolve_custom_strategy(thing):
+        assert thing is typ
+        if is_handled:
+            return st.just(sentinel)
+        return NotImplemented
+
+    with temp_registered(typ, resolve_custom_strategy):
+        if is_handled:
+            assert st.from_type(typ).example() is sentinel
+        else:
+            assert isinstance(st.from_type(typ).example(), int)
 
 
 E = enum.Enum("E", "a b c")
@@ -522,8 +579,8 @@ def test_override_args_for_namedtuple(thing):
 
 @pytest.mark.parametrize("thing", [typing.Optional, typing.List, typing.Type])
 def test_cannot_resolve_bare_forward_reference(thing):
+    t = thing["ConcreteFoo"]
     with pytest.raises(InvalidArgument):
-        t = thing["ConcreteFoo"]
         st.from_type(t).example()
 
 
@@ -536,8 +593,114 @@ class Tree:
         return f"Tree({self.left}, {self.right})"
 
 
-def test_resolving_recursive_type():
-    assert isinstance(st.builds(Tree).example(), Tree)
+@given(tree=st.builds(Tree))
+def test_resolving_recursive_type(tree):
+    assert isinstance(tree, Tree)
+
+
+class TypedTree(typing.TypedDict):
+    nxt: typing.Optional["TypedTree"]
+
+
+def test_resolving_recursive_typeddict():
+    tree = st.from_type(TypedTree).example()
+    assert isinstance(tree, dict)
+    assert len(tree) == 1
+    assert "nxt" in tree
+
+
+class MyList:
+    def __init__(self, nxt: typing.Optional["MyList"] = None):
+        self.nxt = nxt
+
+    def __repr__(self):
+        return f"MyList({self.nxt})"
+
+    def __eq__(self, other):
+        return type(self) == type(other) and self.nxt == other.nxt
+
+
+@given(lst=st.from_type(MyList))
+def test_resolving_recursive_type_with_defaults(lst):
+    assert isinstance(lst, MyList)
+
+
+def test_recursive_type_with_defaults_minimizes_to_defaults():
+    assert minimal(from_type(MyList), lambda ex: True) == MyList()
+
+
+class A:
+    def __init__(self, nxt: typing.Optional["B"]):
+        self.nxt = nxt
+
+    def __repr__(self):
+        return f"A({self.nxt})"
+
+
+class B:
+    def __init__(self, nxt: typing.Optional["A"]):
+        self.nxt = nxt
+
+    def __repr__(self):
+        return f"B({self.nxt})"
+
+
+@given(nxt=st.from_type(A))
+def test_resolving_mutually_recursive_types(nxt):
+    i = 0
+    while nxt:
+        assert isinstance(nxt, [A, B][i % 2])
+        nxt = nxt.nxt
+        i += 1
+
+
+def test_resolving_mutually_recursive_types_with_limited_stack():
+    orig_recursionlimit = sys.getrecursionlimit()
+    current_stack_depth = stack_depth_of_caller()
+    sys.setrecursionlimit(current_stack_depth + 100)
+    try:
+
+        @given(nxt=st.from_type(A))
+        def test(nxt):
+            pass
+
+        test()
+    finally:
+        assert sys.getrecursionlimit() == current_stack_depth + 100
+        sys.setrecursionlimit(orig_recursionlimit)
+
+
+class A_with_default:
+    def __init__(self, nxt: typing.Optional["B_with_default"] = None):
+        self.nxt = nxt
+
+    def __repr__(self):
+        return f"A_with_default({self.nxt})"
+
+
+class B_with_default:
+    def __init__(self, nxt: typing.Optional["A_with_default"] = None):
+        self.nxt = nxt
+
+    def __repr__(self):
+        return f"B_with_default({self.nxt})"
+
+
+@pytest.mark.skipif(
+    PYPY and sys.version_info[:2] < (3, 9),
+    reason="mysterious failure on pypy/python<3.9",
+)
+@given(nxt=st.from_type(A_with_default))
+def test_resolving_mutually_recursive_types_with_defaults(nxt):
+    # This test is required to cover the raise/except part of the recursion
+    # check in from_type, see
+    # https://github.com/HypothesisWorks/hypothesis/issues/3655. If the
+    # skip-nondefaulted-args check is removed, this test becomes redundant.
+    i = 0
+    while nxt:
+        assert isinstance(nxt, [A_with_default, B_with_default][i % 2])
+        nxt = nxt.nxt
+        i += 1
 
 
 class SomeClass:
@@ -554,7 +717,12 @@ def test_resolving_recursive_type_with_registered_constraint():
     with temp_registered(
         SomeClass, st.builds(SomeClass, value=st.integers(min_value=1))
     ):
-        find_any(st.from_type(SomeClass), lambda s: s.next_node is None)
+
+        @given(s=st.from_type(SomeClass))
+        def test(s):
+            assert isinstance(s, SomeClass)
+
+        test()
 
 
 def test_resolving_recursive_type_with_registered_constraint_not_none():
@@ -651,7 +819,7 @@ def test_inference_on_generic_collections_abc_aliases(typ, data):
 def test_bytestring_not_treated_as_generic_sequence(val):
     # Check that we don't fall into the specific problem from
     # https://github.com/HypothesisWorks/hypothesis/issues/2257
-    assert not isinstance(val, typing.ByteString)
+    assert not isinstance(val, bytes)
     # Check it hasn't happened again from some other non-generic sequence type.
     for x in val:
         assert isinstance(x, set)
@@ -663,7 +831,7 @@ def test_bytestring_not_treated_as_generic_sequence(val):
 def test_bytestring_is_valid_sequence_of_int_and_parent_classes(type_):
     find_any(
         st.from_type(typing.Sequence[type_]),
-        lambda val: isinstance(val, typing.ByteString),
+        lambda val: isinstance(val, bytes),
     )
 
 
@@ -676,6 +844,58 @@ def test_supportsop_types_support_protocol(protocol, data):
     # check that we aren't somehow generating instances of the protocol itself
     assert value.__class__ != protocol
     assert issubclass(type(value), protocol)
+
+
+@pytest.mark.parametrize("restrict_custom_strategy", [True, False])
+def test_generic_aliases_can_be_conditionally_resolved_by_registered_function(
+    restrict_custom_strategy,
+):
+    # Check that a custom strategy function may provide no strategy for a
+    # generic alias request like Container[T]. We test this under two scenarios:
+    # - where CustomContainer CANNOT be generated from requests for Container[T]
+    #   (only for requests for exactly CustomContainer[T])
+    # - where CustomContainer CAN be generated from requests for Container[T]
+    T = typing.TypeVar("T")
+
+    @dataclass
+    class CustomContainer(typing.Container[T]):
+        content: T
+
+        def __contains__(self, value: object) -> bool:
+            return self.content == value
+
+    def get_custom_container_strategy(thing):
+        if restrict_custom_strategy and typing.get_origin(thing) != CustomContainer:
+            return NotImplemented
+        return st.builds(
+            CustomContainer, content=st.from_type(typing.get_args(thing)[0])
+        )
+
+    with temp_registered(CustomContainer, get_custom_container_strategy):
+
+        def is_custom_container_with_str(example):
+            return isinstance(example, CustomContainer) and isinstance(
+                example.content, str
+            )
+
+        def is_non_custom_container(example):
+            return isinstance(example, typing.Container) and not isinstance(
+                example, CustomContainer
+            )
+
+        assert_all_examples(
+            st.from_type(CustomContainer[str]), is_custom_container_with_str
+        )
+        # If the strategy function is restricting, it doesn't return a strategy
+        # for requests for Container[...], so it's never generated. When not
+        # restricting, it is generated.
+        if restrict_custom_strategy:
+            assert_all_examples(
+                st.from_type(typing.Container[str]), is_non_custom_container
+            )
+        else:
+            find_any(st.from_type(typing.Container[str]), is_custom_container_with_str)
+            find_any(st.from_type(typing.Container[str]), is_non_custom_container)
 
 
 @pytest.mark.parametrize(
@@ -737,12 +957,23 @@ def test_hashable_type_unhashable_value():
     )
 
 
+class _EmptyClass:
+    def __init__(self, value=-1) -> None:
+        pass
+
+
 @pytest.mark.parametrize(
     "typ,repr_",
     [
         (int, "integers()"),
         (typing.List[str], "lists(text())"),
         ("not a type", "from_type('not a type')"),
+        (random.Random, "randoms()"),
+        (_EmptyClass, "from_type(tests.cover.test_lookup._EmptyClass)"),
+        (
+            st.SearchStrategy[str],
+            "from_type(hypothesis.strategies.SearchStrategy[str])",
+        ),
     ],
 )
 def test_repr_passthrough(typ, repr_):
@@ -760,7 +991,7 @@ def test_resolves_forward_references_outside_annotations(t):
     assert isinstance(t, TreeForwardRefs)
 
 
-def constructor(a: str = None):
+def constructor(a: str = None):  # noqa  # deprecated implicit optional, for testing
     pass
 
 
@@ -861,7 +1092,7 @@ def test_signature_is_the_most_important_source(thing):
 
 
 class AnnotatedAndDefault:
-    def __init__(self, foo: bool = None):
+    def __init__(self, foo: typing.Optional[bool] = None):
         self.foo = foo
 
 
@@ -872,13 +1103,17 @@ def test_from_type_can_be_default_or_annotation():
 
 @pytest.mark.parametrize("t", BUILTIN_TYPES, ids=lambda t: t.__name__)
 def test_resolves_builtin_types(t):
-    v = st.from_type(t).example()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SmallSearchSpaceWarning)
+        v = st.from_type(t).example()
     assert isinstance(v, t)
 
 
 @pytest.mark.parametrize("t", BUILTIN_TYPES, ids=lambda t: t.__name__)
-def test_resolves_forwardrefs_to_builtin_types(t):
-    v = st.from_type(typing.ForwardRef(t.__name__)).example()
+@given(data=st.data())
+def test_resolves_forwardrefs_to_builtin_types(t, data):
+    s = st.from_type(typing.ForwardRef(t.__name__))
+    v = data.draw(s)
     assert isinstance(v, t)
 
 
@@ -914,3 +1149,42 @@ def test_builds_mentions_no_type_check():
     msg = "@no_type_check decorator prevented Hypothesis from inferring a strategy"
     with pytest.raises(TypeError, match=msg):
         st.builds(f).example()
+
+
+class TupleSubtype(tuple):
+    pass
+
+
+def test_tuple_subclasses_not_generic_sequences():
+    # see https://github.com/HypothesisWorks/hypothesis/issues/3767.
+    with temp_registered(TupleSubtype, st.builds(TupleSubtype)):
+        s = st.from_type(typing.Sequence[int])
+        assert_no_examples(s, lambda x: isinstance(x, tuple))
+
+
+def test_custom_strategy_function_resolves_types_conditionally():
+    sentinel = object()
+
+    class A:
+        pass
+
+    class B(A):
+        pass
+
+    class C(A):
+        pass
+
+    def resolve_custom_strategy_for_b(thing):
+        if thing == B:
+            return st.just(sentinel)
+        return NotImplemented
+
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(temp_registered(B, resolve_custom_strategy_for_b))
+        stack.enter_context(temp_registered(C, st.builds(C)))
+
+        # C's strategy can be used for A, but B's cannot because its function
+        # only returns a strategy for requests for exactly B.
+        assert_all_examples(st.from_type(A), lambda example: type(example) == C)
+        assert_all_examples(st.from_type(B), lambda example: example is sentinel)
+        assert_all_examples(st.from_type(C), lambda example: type(example) == C)

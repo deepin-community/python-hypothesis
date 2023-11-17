@@ -10,13 +10,21 @@
 
 import abc
 import binascii
+import json
 import os
 import sys
 import warnings
+from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from hashlib import sha384
-from typing import Dict, Iterable
+from os import getenv
+from pathlib import Path, PurePath
+from typing import Dict, Iterable, Optional, Set
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from zipfile import BadZipFile, ZipFile
 
-from hypothesis.configuration import mkdir_p, storage_directory
+from hypothesis.configuration import storage_directory
 from hypothesis.errors import HypothesisException, HypothesisWarning
 from hypothesis.utils.conventions import not_set
 
@@ -26,19 +34,20 @@ __all__ = [
     "InMemoryExampleDatabase",
     "MultiplexedDatabase",
     "ReadOnlyDatabase",
+    "GitHubArtifactDatabase",
 ]
 
 
-def _usable_dir(path):
+def _usable_dir(path: Path) -> bool:
     """
     Returns True iff the desired path can be used as database path because
     either the directory exists and can be used, or its root directory can
     be used and we can make the directory as needed.
     """
-    while not os.path.exists(path):
+    while not path.exists():
         # Loop terminates because the root dir ('/' on unix) always exists.
-        path = os.path.dirname(path)
-    return os.path.isdir(path) and os.access(path, os.R_OK | os.W_OK | os.X_OK)
+        path = path.parent
+    return path.is_dir() and os.access(path, os.R_OK | os.W_OK | os.X_OK)
 
 
 def _db_for_path(path=None):
@@ -53,11 +62,11 @@ def _db_for_path(path=None):
         path = storage_directory("examples")
         if not _usable_dir(path):  # pragma: no cover
             warnings.warn(
-                HypothesisWarning(
-                    "The database setting is not configured, and the default "
-                    "location is unusable - falling back to an in-memory "
-                    f"database for this session.  path={path!r}"
-                )
+                "The database setting is not configured, and the default "
+                "location is unusable - falling back to an in-memory "
+                f"database for this session.  {path=}",
+                HypothesisWarning,
+                stacklevel=3,
             )
             return InMemoryExampleDatabase()
     if path in (None, ":memory:"):
@@ -180,33 +189,31 @@ class DirectoryBasedExampleDatabase(ExampleDatabase):
     the :class:`~hypothesis.database.MultiplexedDatabase` helper.
     """
 
-    def __init__(self, path: str) -> None:
-        self.path = path
-        self.keypaths: Dict[str, str] = {}
+    def __init__(self, path: os.PathLike) -> None:
+        self.path = Path(path)
+        self.keypaths: Dict[bytes, Path] = {}
 
     def __repr__(self) -> str:
         return f"DirectoryBasedExampleDatabase({self.path!r})"
 
-    def _key_path(self, key):
+    def _key_path(self, key: bytes) -> Path:
         try:
             return self.keypaths[key]
         except KeyError:
             pass
-        directory = os.path.join(self.path, _hash(key))
-        self.keypaths[key] = directory
-        return directory
+        self.keypaths[key] = self.path / _hash(key)
+        return self.keypaths[key]
 
     def _value_path(self, key, value):
-        return os.path.join(self._key_path(key), _hash(value))
+        return self._key_path(key) / _hash(value)
 
     def fetch(self, key: bytes) -> Iterable[bytes]:
         kp = self._key_path(key)
-        if not os.path.exists(kp):
+        if not kp.is_dir():
             return
         for path in os.listdir(kp):
             try:
-                with open(os.path.join(kp, path), "rb") as i:
-                    yield i.read()
+                yield (kp / path).read_bytes()
             except OSError:
                 pass
 
@@ -214,32 +221,34 @@ class DirectoryBasedExampleDatabase(ExampleDatabase):
         # Note: we attempt to create the dir in question now. We
         # already checked for permissions, but there can still be other issues,
         # e.g. the disk is full
-        mkdir_p(self._key_path(key))
+        self._key_path(key).mkdir(exist_ok=True, parents=True)
         path = self._value_path(key, value)
-        if not os.path.exists(path):
+        if not path.exists():
             suffix = binascii.hexlify(os.urandom(16)).decode("ascii")
-            tmpname = path + "." + suffix
-            with open(tmpname, "wb") as o:
-                o.write(value)
+            tmpname = path.with_suffix(f"{path.suffix}.{suffix}")
+            tmpname.write_bytes(value)
             try:
-                os.rename(tmpname, path)
+                tmpname.rename(path)
             except OSError:  # pragma: no cover
-                os.unlink(tmpname)
-            assert not os.path.exists(tmpname)
+                tmpname.unlink()
+            assert not tmpname.exists()
 
     def move(self, src: bytes, dest: bytes, value: bytes) -> None:
         if src == dest:
             self.save(src, value)
             return
         try:
-            os.renames(self._value_path(src, value), self._value_path(dest, value))
+            os.renames(
+                self._value_path(src, value),
+                self._value_path(dest, value),
+            )
         except OSError:
             self.delete(src, value)
             self.save(dest, value)
 
     def delete(self, key: bytes, value: bytes) -> None:
         try:
-            os.unlink(self._value_path(key, value))
+            self._value_path(key, value).unlink()
         except OSError:
             pass
 
@@ -324,3 +333,331 @@ class MultiplexedDatabase(ExampleDatabase):
     def move(self, src: bytes, dest: bytes, value: bytes) -> None:
         for db in self._wrapped:
             db.move(src, dest, value)
+
+
+class GitHubArtifactDatabase(ExampleDatabase):
+    """
+    A file-based database loaded from a `GitHub Actions <https://docs.github.com/en/actions>`_ artifact.
+
+    You can use this for sharing example databases between CI runs and developers, allowing
+    the latter to get read-only access to the former. This is particularly useful for
+    continuous fuzzing (i.e. with `HypoFuzz <https://hypofuzz.com/>`_),
+    where the CI system can help find new failing examples through fuzzing,
+    and developers can reproduce them locally without any manual effort.
+
+    .. note::
+        You must provide ``GITHUB_TOKEN`` as an environment variable. In CI, Github Actions provides
+        this automatically, but it needs to be set manually for local usage. In a developer machine,
+        this would usually be a `Personal Access Token <https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token>`_.
+        If the repository is private, it's necessary for the token to have `repo` scope
+        in the case of a classic token, or `actions:read` in the case of a fine-grained token.
+
+
+    In most cases, this will be used
+    through the :class:`~hypothesis.database.MultiplexedDatabase`,
+    by combining a local directory-based database with this one. For example:
+
+    .. code-block:: python
+
+        local = DirectoryBasedExampleDatabase(".hypothesis/examples")
+        shared = ReadOnlyDatabase(GitHubArtifactDatabase("user", "repo"))
+
+        settings.register_profile("ci", database=local)
+        settings.register_profile("dev", database=MultiplexedDatabase(local, shared))
+        # We don't want to use the shared database in CI, only to populate its local one.
+        # which the workflow should then upload as an artifact.
+        settings.load_profile("ci" if os.environ.get("CI") else "dev")
+
+    .. note::
+        Because this database is read-only, you always need to wrap it with the
+        :class:`ReadOnlyDatabase`.
+
+    A setup like this can be paired with a GitHub Actions workflow including
+    something like the following:
+
+    .. code-block:: yaml
+
+        - name: Download example database
+          uses: dawidd6/action-download-artifact@v2.24.3
+          with:
+            name: hypothesis-example-db
+            path: .hypothesis/examples
+            if_no_artifact_found: warn
+            workflow_conclusion: completed
+
+        - name: Run tests
+          run: pytest
+
+        - name: Upload example database
+          uses: actions/upload-artifact@v3
+          if: always()
+          with:
+            name: hypothesis-example-db
+            path: .hypothesis/examples
+
+    In this workflow, we use `dawidd6/action-download-artifact <https://github.com/dawidd6/action-download-artifact>`_
+    to download the latest artifact given that the official `actions/download-artifact <https://github.com/actions/download-artifact>`_
+    does not support downloading artifacts from previous workflow runs.
+
+    The database automatically implements a simple file-based cache with a default expiration period
+    of 1 day. You can adjust this through the `cache_timeout` property.
+
+    For mono-repo support, you can provide a unique `artifact_name` (e.g. `hypofuzz-example-db-frontend`).
+    """
+
+    def __init__(
+        self,
+        owner: str,
+        repo: str,
+        artifact_name: str = "hypothesis-example-db",
+        cache_timeout: timedelta = timedelta(days=1),
+        path: Optional[os.PathLike] = None,
+    ):
+        self.owner = owner
+        self.repo = repo
+        self.artifact_name = artifact_name
+        self.cache_timeout = cache_timeout
+
+        # Get the GitHub token from the environment
+        # It's unnecessary to use a token if the repo is public
+        self.token: Optional[str] = getenv("GITHUB_TOKEN")
+
+        if path is None:
+            self.path: Path = Path(
+                storage_directory(f"github-artifacts/{self.artifact_name}/")
+            )
+        else:
+            self.path = Path(path)
+
+        # We don't want to initialize the cache until we need to
+        self._initialized: bool = False
+        self._disabled: bool = False
+
+        # This is the path to the artifact in usage
+        # .hypothesis/github-artifacts/<artifact-name>/<modified_isoformat>.zip
+        self._artifact: Optional[Path] = None
+        # This caches the artifact structure
+        self._access_cache: Optional[Dict[PurePath, Set[PurePath]]] = None
+
+        # Message to display if user doesn't wrap around ReadOnlyDatabase
+        self._read_only_message = (
+            "This database is read-only. "
+            "Please wrap this class with ReadOnlyDatabase"
+            "i.e. ReadOnlyDatabase(GitHubArtifactDatabase(...))."
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"GitHubArtifactDatabase(owner={self.owner!r}, "
+            f"repo={self.repo!r}, artifact_name={self.artifact_name!r})"
+        )
+
+    def _prepare_for_io(self) -> None:
+        assert self._artifact is not None, "Artifact not loaded."
+
+        if self._initialized:  # pragma: no cover
+            return
+
+        # Test that the artifact is valid
+        try:
+            with ZipFile(self._artifact) as f:
+                if f.testzip():  # pragma: no cover
+                    raise BadZipFile
+
+            # Turns out that testzip() doesn't work quite well
+            # doing the cache initialization here instead
+            # will give us more coverage of the artifact.
+
+            # Cache the files inside each keypath
+            self._access_cache = {}
+            with ZipFile(self._artifact) as zf:
+                namelist = zf.namelist()
+                # Iterate over files in the artifact
+                for filename in namelist:
+                    fileinfo = zf.getinfo(filename)
+                    if fileinfo.is_dir():
+                        self._access_cache[PurePath(filename)] = set()
+                    else:
+                        # Get the keypath from the filename
+                        keypath = PurePath(filename).parent
+                        # Add the file to the keypath
+                        self._access_cache[keypath].add(PurePath(filename))
+        except BadZipFile:
+            warnings.warn(
+                "The downloaded artifact from GitHub is invalid. "
+                "This could be because the artifact was corrupted, "
+                "or because the artifact was not created by Hypothesis. ",
+                HypothesisWarning,
+                stacklevel=3,
+            )
+            self._disabled = True
+
+        self._initialized = True
+
+    def _initialize_db(self) -> None:
+        # Create the cache directory if it doesn't exist
+        self.path.mkdir(exist_ok=True, parents=True)
+
+        # Get all artifacts
+        cached_artifacts = sorted(
+            self.path.glob("*.zip"),
+            key=lambda a: datetime.fromisoformat(a.stem.replace("_", ":")),
+        )
+
+        # Remove all but the latest artifact
+        for artifact in cached_artifacts[:-1]:
+            artifact.unlink()
+
+        try:
+            found_artifact = cached_artifacts[-1]
+        except IndexError:
+            found_artifact = None
+
+        # Check if the latest artifact is a cache hit
+        if found_artifact is not None and (
+            datetime.now(timezone.utc)
+            - datetime.fromisoformat(found_artifact.stem.replace("_", ":"))
+            < self.cache_timeout
+        ):
+            self._artifact = found_artifact
+        else:
+            # Download the latest artifact from GitHub
+            new_artifact = self._fetch_artifact()
+
+            if new_artifact:
+                if found_artifact is not None:
+                    found_artifact.unlink()
+                self._artifact = new_artifact
+            elif found_artifact is not None:
+                warnings.warn(
+                    "Using an expired artifact as a fallback for the database: "
+                    f"{found_artifact}",
+                    HypothesisWarning,
+                    stacklevel=2,
+                )
+                self._artifact = found_artifact
+            else:
+                warnings.warn(
+                    "Couldn't acquire a new or existing artifact. Disabling database.",
+                    HypothesisWarning,
+                    stacklevel=2,
+                )
+                self._disabled = True
+                return
+
+        self._prepare_for_io()
+
+    def _get_bytes(self, url: str) -> Optional[bytes]:  # pragma: no cover
+        request = Request(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28 ",
+                "Authorization": f"Bearer {self.token}",
+            },
+        )
+        warning_message = None
+        response_bytes: Optional[bytes] = None
+        try:
+            with urlopen(request) as response:
+                response_bytes = response.read()
+        except HTTPError as e:
+            if e.code == 401:
+                warning_message = (
+                    "Authorization failed when trying to download artifact from GitHub. "
+                    "Check that you have a valid GITHUB_TOKEN set in your environment."
+                )
+            else:
+                warning_message = (
+                    "Could not get the latest artifact from GitHub. "
+                    "This could be because because the repository "
+                    "or artifact does not exist. "
+                )
+        except URLError:
+            warning_message = "Could not connect to GitHub to get the latest artifact. "
+        except TimeoutError:
+            warning_message = (
+                "Could not connect to GitHub to get the latest artifact "
+                "(connection timed out)."
+            )
+
+        if warning_message is not None:
+            warnings.warn(warning_message, HypothesisWarning, stacklevel=4)
+            return None
+
+        return response_bytes
+
+    def _fetch_artifact(self) -> Optional[Path]:  # pragma: no cover
+        # Get the list of artifacts from GitHub
+        url = f"https://api.github.com/repos/{self.owner}/{self.repo}/actions/artifacts"
+        response_bytes = self._get_bytes(url)
+        if response_bytes is None:
+            return None
+
+        artifacts = json.loads(response_bytes)["artifacts"]
+        artifacts = [a for a in artifacts if a["name"] == self.artifact_name]
+
+        if not artifacts:
+            return None
+
+        # Get the latest artifact from the list
+        artifact = max(artifacts, key=lambda a: a["created_at"])
+        url = artifact["archive_download_url"]
+
+        # Download the artifact
+        artifact_bytes = self._get_bytes(url)
+        if artifact_bytes is None:
+            return None
+
+        # Save the artifact to the cache
+        # We replace ":" with "_" to ensure the filenames are compatible
+        # with Windows filesystems
+        timestamp = datetime.now(timezone.utc).isoformat().replace(":", "_")
+        artifact_path = self.path / f"{timestamp}.zip"
+        try:
+            artifact_path.write_bytes(artifact_bytes)
+        except OSError:
+            warnings.warn(
+                "Could not save the latest artifact from GitHub. ",
+                HypothesisWarning,
+                stacklevel=3,
+            )
+            return None
+
+        return artifact_path
+
+    @staticmethod
+    @lru_cache
+    def _key_path(key: bytes) -> PurePath:
+        return PurePath(_hash(key) + "/")
+
+    def fetch(self, key: bytes) -> Iterable[bytes]:
+        if self._disabled:
+            return
+
+        if not self._initialized:
+            self._initialize_db()
+            if self._disabled:
+                return
+
+        assert self._artifact is not None
+        assert self._access_cache is not None
+
+        kp = self._key_path(key)
+
+        with ZipFile(self._artifact) as zf:
+            # Get the all files in the the kp from the cache
+            filenames = self._access_cache.get(kp, ())
+            for filename in filenames:
+                with zf.open(filename.as_posix()) as f:
+                    yield f.read()
+
+    # Read-only interface
+    def save(self, key: bytes, value: bytes) -> None:
+        raise RuntimeError(self._read_only_message)
+
+    def move(self, src: bytes, dest: bytes, value: bytes) -> None:
+        raise RuntimeError(self._read_only_message)
+
+    def delete(self, key: bytes, value: bytes) -> None:
+        raise RuntimeError(self._read_only_message)

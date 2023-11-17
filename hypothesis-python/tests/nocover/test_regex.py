@@ -10,7 +10,10 @@
 
 import re
 import string
+import sys
 from functools import reduce
+
+import pytest
 
 from hypothesis import assume, given, reject, strategies as st
 from hypothesis.strategies._internal.regex import base_regex_strategy
@@ -60,7 +63,10 @@ FLAGS = st.sets(
 @given(st.data())
 def test_conservative_regex_are_correct_by_construction(data):
     pattern = re.compile(data.draw(CONSERVATIVE_REGEX), flags=data.draw(FLAGS))
-    result = data.draw(base_regex_strategy(pattern))
+    result = data.draw(base_regex_strategy(pattern, alphabet=st.characters()))
+    # We'll skip "capital I with dot above" due to awful casefolding behaviour
+    # and "latin small letter dotless i" for the same reason.
+    assume({"ı", "İ"}.isdisjoint(pattern.pattern + result))
     assert pattern.search(result) is not None
 
 
@@ -81,6 +87,22 @@ def test_fuzz_stuff(data):
 
     ex = data.draw(st.from_regex(regex))
     assert regex.search(ex)
+
+
+@pytest.mark.skipif(sys.version_info[:2] < (3, 11), reason="new syntax")
+@given(st.data())
+def test_regex_atomic_group(data):
+    pattern = "a(?>bc|b)c"
+    ex = data.draw(st.from_regex(pattern))
+    assert re.search(pattern, ex)
+
+
+@pytest.mark.skipif(sys.version_info[:2] < (3, 11), reason="new syntax")
+@given(st.data())
+def test_regex_possessive(data):
+    pattern = '"[^"]*+"'
+    ex = data.draw(st.from_regex(pattern))
+    assert re.search(pattern, ex)
 
 
 # Some preliminaries, to establish what's happening:

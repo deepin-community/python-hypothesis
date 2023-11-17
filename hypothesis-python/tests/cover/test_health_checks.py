@@ -57,7 +57,7 @@ def test_slow_generation_inline_fails_a_health_check():
 def test_default_health_check_can_weaken_specific():
     import random
 
-    @settings(HEALTH_CHECK_SETTINGS, suppress_health_check=HealthCheck.all())
+    @settings(HEALTH_CHECK_SETTINGS, suppress_health_check=list(HealthCheck))
     @given(st.lists(st.integers(), min_size=1))
     def test(x):
         random.choice(x)
@@ -76,7 +76,7 @@ def test_suppressing_filtering_health_check():
     @HEALTH_CHECK_SETTINGS
     @given(st.integers().filter(unhealthy_filter))
     def test1(x):
-        raise ValueError()
+        raise ValueError
 
     with raises(FailedHealthCheck):
         test1()
@@ -86,7 +86,7 @@ def test_suppressing_filtering_health_check():
     @settings(suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow])
     @given(st.integers().filter(unhealthy_filter))
     def test2(x):
-        raise ValueError()
+        raise ValueError
 
     with raises(ValueError):
         test2()
@@ -152,18 +152,9 @@ def test_the_slow_test_health_check_can_be_disabled():
 
 def test_the_slow_test_health_only_runs_if_health_checks_are_on():
     @given(st.integers())
-    @settings(suppress_health_check=HealthCheck.all(), deadline=None)
+    @settings(suppress_health_check=list(HealthCheck), deadline=None)
     def a(x):
         time.sleep(1000)
-
-    a()
-
-
-def test_returning_non_none_does_not_fail_if_health_check_disabled():
-    @given(st.integers())
-    @settings(suppress_health_check=HealthCheck.all())
-    def a(x):
-        return 1
 
     a()
 
@@ -188,6 +179,20 @@ def test_example_that_shrinks_to_overrun_fails_health_check():
         test()
 
     assert str(HealthCheck.large_base_example) in str(exc.value)
+
+
+class sample_test_runner:
+    @given(st.none())
+    def test(self, _):
+        pass
+
+
+def test_differing_executors_fails_health_check():
+    sample_test_runner().test()
+    with pytest.raises(FailedHealthCheck) as exc:
+        sample_test_runner().test()
+
+    assert str(HealthCheck.differing_executors) in str(exc.value)
 
 
 def test_it_is_an_error_to_suppress_non_iterables():
