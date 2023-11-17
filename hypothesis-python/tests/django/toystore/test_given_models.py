@@ -9,14 +9,13 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import datetime as dt
-import sys
 from uuid import UUID
 
 from django.conf import settings as django_settings
 from django.contrib.auth.models import User
 
 from hypothesis import HealthCheck, assume, given, settings
-from hypothesis.control import reject
+from hypothesis.control import current_build_context, reject
 from hypothesis.errors import HypothesisException, InvalidArgument
 from hypothesis.extra.django import (
     TestCase,
@@ -148,13 +147,16 @@ class TestGetsBasicModels(TestCase):
         strategy = from_model(
             CompanyExtension, company=company_strategy, self_modifying=just(2)
         )
+        context = current_build_context()
         try:
-            ConjectureData.for_buffer(buf).draw(strategy)
+            context.data = ConjectureData.for_buffer(buf)
+            context.data.draw(strategy)
         except HypothesisException:
             reject()
         # Draw again with the same buffer. This will cause a duplicate
         # primary key.
-        ConjectureData.for_buffer(buf).draw(strategy)
+        context.data = ConjectureData.for_buffer(buf)
+        context.data.draw(strategy)
         assert CompanyExtension.objects.all().count() == 1
 
 
@@ -193,11 +195,6 @@ class TestPosOnlyArg(TestCase):
         pass
 
     def test_from_model_signature(self):
-        if sys.version_info[:2] <= (3, 7):
-            self.assertRaises(TypeError, from_model().example)
-            self.assertRaises(TypeError, from_model(Car, None).example)
-            self.assertRaises(TypeError, from_model(model=Customer).example)
-        else:
-            self.assertRaises(TypeError, from_model)
-            self.assertRaises(TypeError, from_model, Car, None)
-            self.assertRaises(TypeError, from_model, model=Customer)
+        self.assertRaises(TypeError, from_model)
+        self.assertRaises(TypeError, from_model, Car, None)
+        self.assertRaises(TypeError, from_model, model=Customer)

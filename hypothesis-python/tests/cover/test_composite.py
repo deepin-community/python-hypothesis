@@ -8,10 +8,16 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import sys
+
 import pytest
 
 from hypothesis import assume, given, strategies as st
-from hypothesis.errors import HypothesisDeprecationWarning, InvalidArgument
+from hypothesis.errors import (
+    HypothesisDeprecationWarning,
+    HypothesisWarning,
+    InvalidArgument,
+)
 
 from tests.common.debug import minimal
 from tests.common.utils import flaky
@@ -140,12 +146,12 @@ def test_does_not_change_arguments(data, ls):
 class ClsWithStrategyMethods:
     @classmethod
     @st.composite
-    def st_classmethod_then_composite(draw, cls):  # noqa: B902
+    def st_classmethod_then_composite(draw, cls):
         return draw(st.integers(0, 10))
 
     @st.composite
     @classmethod
-    def st_composite_then_classmethod(draw, cls):  # noqa: B902
+    def st_composite_then_classmethod(draw, cls):
         return draw(st.integers(0, 10))
 
     @staticmethod
@@ -159,7 +165,7 @@ class ClsWithStrategyMethods:
         return draw(st.integers(0, 10))
 
     @st.composite
-    def st_composite_method(draw, self):  # noqa: B902
+    def st_composite_method(draw, self):
         return draw(st.integers(0, 10))
 
 
@@ -185,3 +191,15 @@ def test_applying_composite_decorator_to_methods(data):
 def test_drawfn_cannot_be_instantiated():
     with pytest.raises(TypeError):
         st.DrawFn()
+
+
+@pytest.mark.skipif(sys.version_info[:2] == (3, 9), reason="stack depth varies???")
+def test_warns_on_strategy_annotation():
+    with pytest.warns(HypothesisWarning, match="Return-type annotation") as w:
+
+        @st.composite
+        def my_integers(draw: st.DrawFn) -> st.SearchStrategy[int]:
+            return draw(st.integers())
+
+    assert len(w.list) == 1
+    assert w.list[0].filename == __file__  # check stacklevel points to user code

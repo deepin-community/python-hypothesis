@@ -53,7 +53,7 @@ LOTS = 10**6
 
 TEST_SETTINGS = settings(
     database=None,
-    suppress_health_check=HealthCheck.all(),
+    suppress_health_check=list(HealthCheck),
     max_examples=LOTS,
     deadline=None,
 )
@@ -92,13 +92,13 @@ def test_can_reduce_poison_from_any_subtree(size, seed):
     starts = [b.start for b in data.blocks if b.length == 2]
     assert len(starts) % 2 == 0
 
+    marker = bytes([1, 2, 3, 4])
     for i in range(0, len(starts), 2):
         # Now for each leaf position in the tree we try inserting a poison
         # value artificially. Additionally, we add a marker to the end that
         # must be preserved. The marker means that we are not allow to rely on
         # discarding the end of the buffer to get the desired shrink.
         u = starts[i]
-        marker = bytes([1, 2, 3, 4])
 
         def test_function_with_poison(data):
             v = data.draw(strat)

@@ -10,6 +10,7 @@
 
 from hypothesis import (
     HealthCheck,
+    Phase,
     Verbosity,
     given,
     settings as Settings,
@@ -34,14 +35,14 @@ def minimal(definition, condition=lambda x: True, settings=None, timeout_after=1
             if runtime:
                 runtime[0] += TIME_INCREMENT
                 if runtime[0] >= timeout_after:
-                    raise Timeout()
+                    raise Timeout
         result = condition(x)
         if result and not runtime:
             runtime.append(0.0)
         return result
 
     if settings is None:
-        settings = Settings(max_examples=50000)
+        settings = Settings(max_examples=50000, phases=(Phase.generate, Phase.shrink))
 
     verbosity = settings.verbosity
     if verbosity == Verbosity.normal:
@@ -50,7 +51,7 @@ def minimal(definition, condition=lambda x: True, settings=None, timeout_after=1
     @given(definition)
     @Settings(
         parent=settings,
-        suppress_health_check=HealthCheck.all(),
+        suppress_health_check=list(HealthCheck),
         report_multiple_bugs=False,
         derandomize=True,
         database=None,

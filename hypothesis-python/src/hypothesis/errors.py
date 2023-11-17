@@ -129,8 +129,11 @@ def __getattr__(name):
             "instead, or `exceptiongroup.BaseExceptionGroup` before Python 3.11",
             since="2022-08-02",
             has_codemod=False,  # This would be a great PR though!
+            stacklevel=1,
         )
         return BaseExceptionGroup
+
+    raise AttributeError(f"Module 'hypothesis.errors' has no attribute {name}")
 
 
 class DeadlineExceeded(_Trimmable):
@@ -166,3 +169,15 @@ class Found(Exception):
     """Signal that the example matches condition. Internal use only."""
 
     hypothesis_internal_never_escalate = True
+
+
+class RewindRecursive(Exception):
+    """Signal that the type inference should be rewound due to recursive types. Internal use only."""
+
+    def __init__(self, target):
+        self.target = target
+
+
+class SmallSearchSpaceWarning(HypothesisWarning):
+    """Indicates that an inferred strategy does not span the search space
+    in a meaningful way, for example by only creating default instances."""

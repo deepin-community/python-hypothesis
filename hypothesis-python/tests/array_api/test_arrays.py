@@ -10,7 +10,7 @@
 
 import pytest
 
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 from hypothesis.errors import InvalidArgument
 from hypothesis.extra.array_api import COMPLEX_NAMES, REAL_NAMES
 from hypothesis.internal.floats import width_smallest_normals
@@ -94,10 +94,11 @@ def test_draw_arrays_from_dtype_strategies(xp, xps, strat_name):
     find_any(xps.arrays(strat, ()))
 
 
+@settings(deadline=None)
 @given(data=st.data())
 def test_draw_arrays_from_dtype_name_strategies(xp, xps, data):
     """Draw arrays from dtype name strategies."""
-    all_names = ("bool",) + REAL_NAMES
+    all_names = ("bool", *REAL_NAMES)
     if xps.api_version > "2021.12":
         all_names += COMPLEX_NAMES
     sample_names = data.draw(
@@ -275,14 +276,14 @@ def test_may_fill_unique_arrays_with_nan(xp, xps):
 
 def test_may_not_fill_unique_array_with_non_nan(xp, xps):
     """Unique strategy with just fill elements of 0.0 raises helpful error."""
+    strat = xps.arrays(
+        dtype=xp.float32,
+        shape=10,
+        elements={"allow_nan": False},
+        unique=True,
+        fill=st.just(0.0),
+    )
     with pytest.raises(InvalidArgument):
-        strat = xps.arrays(
-            dtype=xp.float32,
-            shape=10,
-            elements={"allow_nan": False},
-            unique=True,
-            fill=st.just(0.0),
-        )
         strat.example()
 
 
@@ -390,7 +391,7 @@ def test_generate_unique_arrays_without_fill(xp, xps):
 
     Covers the collision-related branches for fully dense unique arrays.
     Choosing 25 of 256 possible values means we're almost certain to see
-    colisions thanks to the birthday paradox, but finding unique values should
+    collisions thanks to the birthday paradox, but finding unique values should
     still be easy.
     """
     skip_on_missing_unique_values(xp)
@@ -424,7 +425,7 @@ def test_array_element_rewriting(xp, xps, data, start, size):
             unique=True,
         )
     )
-    x_set_expect = xp.linspace(start, start + size - 1, size, dtype=xp.int64)
+    x_set_expect = xp.arange(start, start + size, dtype=xp.int64)
     x_set = xp.sort(xp.unique_values(x))
     assert xp.all(x_set == x_set_expect)
 

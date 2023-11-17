@@ -20,7 +20,7 @@ PYTHON_VERSIONS = ["3.8", "3.9", "3.10", "3.11"]
 
 
 def test_mypy_passes_on_hypothesis():
-    pip_tool("mypy", PYTHON_SRC)
+    pip_tool("mypy", str(PYTHON_SRC))
 
 
 @pytest.mark.skip(
@@ -28,7 +28,7 @@ def test_mypy_passes_on_hypothesis():
     "but strict checks for our internals would be a net drag on productivity."
 )
 def test_mypy_passes_on_hypothesis_strict():
-    pip_tool("mypy", "--strict", PYTHON_SRC)
+    pip_tool("mypy", "--strict", str(PYTHON_SRC))
 
 
 def get_mypy_output(fname, *extra_args):
@@ -115,16 +115,20 @@ def assert_mypy_errors(fname, expected, python_version=None):
             "one_of(integers(), text(), none(), binary(), builds(list), builds(dict))",
             "Any",
         ),
-        ("tuples()", "Tuple[]"),  # Should be `Tuple[()]`, but this is what mypy prints
-        ("tuples(integers())", "Tuple[int]"),
-        ("tuples(integers(), text())", "Tuple[int, str]"),
+        ("tuples()", "tuple[()]"),
+        ("tuples(integers())", "tuple[int]"),
+        ("tuples(integers(), text())", "tuple[int, str]"),
         (
             "tuples(integers(), text(), integers(), text(), integers())",
-            "Tuple[int, str, int, str, int]",
+            "tuple[int, str, int, str, int]",
         ),
         (
             "tuples(text(), text(), text(), text(), text(), text())",
             "tuple[Any, ...]",
+        ),
+        (
+            "from_type(type).flatmap(from_type).filter(lambda x: not isinstance(x, int))",
+            "Ex_Inv`-1",
         ),
     ],
 )

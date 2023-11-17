@@ -12,6 +12,7 @@ import gc
 import random
 import sys
 import time as time_module
+from functools import wraps
 
 import pytest
 
@@ -26,11 +27,9 @@ run()
 # Skip collection of tests which require the Django test runner,
 # or that don't work on the current version of Python.
 collect_ignore_glob = ["django/*"]
-if sys.version_info < (3, 8):
-    collect_ignore_glob.append("array_api")
-    collect_ignore_glob.append("cover/*py38*")
 if sys.version_info < (3, 9):
     collect_ignore_glob.append("cover/*py39*")
+    collect_ignore_glob.append("patching/*")
 if sys.version_info < (3, 10):
     collect_ignore_glob.append("cover/*py310*")
 
@@ -50,14 +49,19 @@ def pytest_addoption(parser):
     parser.addoption("--hypothesis-update-outputs", action="store_true")
     parser.addoption("--hypothesis-learn-to-normalize", action="store_true")
 
+    # New in pytest 6, so we add a shim on old versions to avoid missing-arg errors
+    arg = "--durations-min"
+    if arg not in sum((a._long_opts for g in parser._groups for a in g.options), []):
+        parser.addoption(arg, action="store", default=1.0)
+
 
 @pytest.fixture(scope="function", autouse=True)
-def gc_before_each_test():
+def _gc_before_each_test():
     gc.collect()
 
 
 @pytest.fixture(scope="function", autouse=True)
-def consistently_increment_time(monkeypatch):
+def _consistently_increment_time(monkeypatch):
     """Rather than rely on real system time we monkey patch time.time so that
     it passes at a consistent rate between calls.
 
@@ -83,10 +87,13 @@ def consistently_increment_time(monkeypatch):
     def freeze():
         frozen[0] = True
 
-    monkeypatch.setattr(time_module, "time", time)
-    monkeypatch.setattr(time_module, "monotonic", time)
-    monkeypatch.setattr(time_module, "perf_counter", time)
-    monkeypatch.setattr(time_module, "sleep", sleep)
+    def _patch(name, fn):
+        monkeypatch.setattr(time_module, name, wraps(getattr(time_module, name))(fn))
+
+    _patch("time", time)
+    _patch("monotonic", time)
+    _patch("perf_counter", time)
+    _patch("sleep", sleep)
     monkeypatch.setattr(time_module, "freeze", freeze, raising=False)
 
 

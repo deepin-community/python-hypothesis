@@ -13,7 +13,7 @@ import pathlib
 import re
 import subprocess
 import sys
-from glob import glob
+from pathlib import Path
 
 import requests
 from coverage.config import CoverageConfig
@@ -33,7 +33,7 @@ BUILD_FILES = tuple(
 
 
 def task(if_changed=()):
-    if isinstance(if_changed, str):
+    if not isinstance(if_changed, tuple):
         if_changed = (if_changed,)
 
     def accept(fn):
@@ -73,12 +73,7 @@ def codespell(*files):
 
 @task()
 def lint():
-    pip_tool(
-        "flake8",
-        *(f for f in tools.all_files() if f.endswith(".py")),
-        "--config",
-        os.path.join(tools.ROOT, ".flake8"),
-    )
+    pip_tool("ruff", ".")
     codespell(*(f for f in tools.all_files() if not f.endswith("by-domain.txt")))
 
 
@@ -103,7 +98,6 @@ def do_release(package):
     tag_name = package.tag_name()
 
     print(f"Creating tag {tag_name}")
-
     tools.create_tag(tag_name)
     tools.push_tag(tag_name)
 
@@ -213,6 +207,7 @@ def format():
             o.write("\n")
 
     codespell("--write-changes", *files_to_format, *doc_files_to_format)
+    pip_tool("ruff", "--fix-only", ".")
     pip_tool("shed", *files_to_format, *doc_files_to_format)
 
 
@@ -241,29 +236,35 @@ def check_not_changed():
 
 
 @task()
-def compile_requirements(upgrade=False):
+def compile_requirements(*, upgrade=False):
     if upgrade:
         extra = ["--upgrade", "--rebuild"]
     else:
         extra = []
 
-    for f in glob(os.path.join("requirements", "*.in")):
-        base, _ = os.path.splitext(f)
+    for f in Path("requirements").glob("*.in"):
+        out_file = f.with_suffix(".txt")
         pip_tool(
             "pip-compile",
             "--allow-unsafe",  # future default, not actually unsafe
             "--resolver=backtracking",  # new pip resolver, default in pip-compile 7+
             *extra,
-            f,
+            str(f),
             "hypothesis-python/setup.py",
             "--output-file",
-            base + ".txt",
+            str(out_file),
             cwd=tools.ROOT,
             env={
                 "CUSTOM_COMPILE_COMMAND": "./build.sh upgrade-requirements",
                 **os.environ,
             },
         )
+        # Check that we haven't added anything to output files without adding to inputs
+        out_pkgs = out_file.read_text(encoding="utf-8")
+        for p in f.read_text(encoding="utf-8").splitlines():
+            p = p.lower().replace("_", "-")
+            if re.fullmatch(r"[a-z-]+", p):
+                assert p + "==" in out_pkgs, f"Package `{p}` deleted from {out_file}"
 
 
 def update_python_versions():
@@ -273,30 +274,35 @@ def update_python_versions():
     # pyenv reports available versions in chronological order, so we keep the newest
     # *unless* our current ends with a digit (is stable) and the candidate does not.
     stable = re.compile(r".*3\.\d+.\d+$")
+    min_minor_version = re.search(
+        r'python_requires=">= ?3.(\d+)"',
+        Path("hypothesis-python/setup.py").read_text(encoding="utf-8"),
+    ).group(1)
     best = {}
     for line in map(str.strip, result.splitlines()):
         if m := re.match(r"(?:pypy)?3\.(?:[789]|\d\d)", line):
             key = m.group()
             if stable.match(line) or not stable.match(best.get(key, line)):
-                best[key] = line
+                if int(key.split(".")[-1]) >= int(min_minor_version):
+                    best[key] = line
 
     if best == PYTHONS:
         return
 
     # Write the new mapping back to this file
     thisfile = pathlib.Path(__file__)
-    before = thisfile.read_text()
+    before = thisfile.read_text(encoding="utf-8")
     after = re.sub(r"\nPYTHONS = \{[^{}]+\}", f"\nPYTHONS = {best}", before)
-    thisfile.write_text(after)
+    thisfile.write_text(after, encoding="utf-8")
     pip_tool("shed", str(thisfile))
 
     # Automatically sync ci_version with the version in build.sh
     build_sh = pathlib.Path(tools.ROOT) / "build.sh"
-    sh_before = build_sh.read_text()
+    sh_before = build_sh.read_text(encoding="utf-8")
     sh_after = re.sub(r"3\.\d\d?\.\d\d?", best[ci_version], sh_before)
     if sh_before != sh_after:
         build_sh.unlink()  # so bash doesn't reload a modified file
-        build_sh.write_text(sh_after)
+        build_sh.write_text(sh_after, encoding="utf-8")
         build_sh.chmod(0o755)
 
 
@@ -315,8 +321,12 @@ def update_vendored_files():
     tz_url = "https://pypi.org/pypi/tzdata/json"
     tzdata_version = requests.get(tz_url).json()["info"]["version"]
     setup = pathlib.Path(hp.BASE_DIR, "setup.py")
-    new = re.sub(r"tzdata>=(.+?) ", f"tzdata>={tzdata_version} ", setup.read_text())
-    setup.write_text(new)
+    new = re.sub(
+        r"tzdata>=(.+?) ",
+        f"tzdata>={tzdata_version} ",
+        setup.read_text(encoding="utf-8"),
+    )
+    setup.write_text(new, encoding="utf-8")
 
 
 def has_diff(file_or_directory):
@@ -331,8 +341,8 @@ def upgrade_requirements():
     subprocess.call(["./build.sh", "format"], cwd=tools.ROOT)  # exits 1 if changed
     if has_diff(hp.PYTHON_SRC) and not os.path.isfile(hp.RELEASE_FILE):
         msg = hp.get_autoupdate_message(domainlist_changed=has_diff(hp.DOMAINS_LIST))
-        with open(hp.RELEASE_FILE, mode="w") as f:
-            f.write(f"RELEASE_TYPE: patch\n\n" + msg)
+        with open(hp.RELEASE_FILE, mode="w", encoding="utf-8") as f:
+            f.write(f"RELEASE_TYPE: patch\n\n{msg}")
     update_python_versions()
     subprocess.call(["git", "add", "."], cwd=tools.ROOT)
 
@@ -379,15 +389,15 @@ def run_tox(task, version, *args):
 # When a version is added or removed, manually update the env lists in tox.ini and
 # workflows/main.yml, and the `Programming Language ::` specifiers in setup.py
 PYTHONS = {
-    "3.7": "3.7.16",
-    "3.8": "3.8.16",
-    "3.9": "3.9.16",
-    "3.10": "3.10.9",
-    "3.11": "3.11.1",
-    "3.12": "3.12-dev",
-    "pypy3.7": "pypy3.7-7.3.9",
+    "3.8": "3.8.18",
+    "3.9": "3.9.18",
+    "3.10": "3.10.13",
+    "3.11": "3.11.6",
+    "3.12": "3.12.0",
+    "3.13": "3.13.0a1",
     "pypy3.8": "pypy3.8-7.3.11",
-    "pypy3.9": "pypy3.9-7.3.11",
+    "pypy3.9": "pypy3.9-7.3.13",
+    "pypy3.10": "pypy3.10-7.3.13",
 }
 ci_version = "3.10"  # Keep this in sync with GH Actions main.yml and .readthedocs.yml
 
@@ -396,6 +406,7 @@ python_tests = task(
         hp.PYTHON_SRC,
         hp.PYTHON_TESTS,
         os.path.join(tools.ROOT, "pytest.ini"),
+        os.path.join(tools.ROOT, "tooling"),
         os.path.join(hp.HYPOTHESIS_PYTHON, "scripts"),
     )
 )
@@ -443,12 +454,13 @@ standard_tox_task("py39-pytest46", py="3.9")
 standard_tox_task("py39-pytest54", py="3.9")
 standard_tox_task("pytest62")
 
-for n in [32, 40, 41]:
+for n in [32, 41, 42]:
     standard_tox_task(f"django{n}")
 
-standard_tox_task("py39-pandas10", py="3.9")
-for n in [11, 12, 13, 14, 15]:
+for n in [11, 12, 13, 14, 15, 20]:
     standard_tox_task(f"pandas{n}")
+
+standard_tox_task("py38-oldestnumpy", py="3.8")
 
 standard_tox_task("coverage")
 standard_tox_task("conjecture-coverage")
@@ -521,7 +533,7 @@ def audit_rust_in_ruby():
 
 @task()
 def python(*args):
-    os.execv(sys.executable, (sys.executable,) + args)
+    os.execv(sys.executable, (sys.executable, *args))
 
 
 @task()

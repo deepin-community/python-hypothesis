@@ -9,18 +9,17 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import base64
-import sys
 from collections import defaultdict
+from typing import ClassVar
 
 import pytest
 from _pytest.outcomes import Failed, Skipped
 from pytest import raises
 
-from hypothesis import __version__, reproduce_failure, seed, settings as Settings
+from hypothesis import Phase, __version__, reproduce_failure, seed, settings as Settings
 from hypothesis.control import current_build_context
 from hypothesis.database import ExampleDatabase
 from hypothesis.errors import DidNotReproduce, Flaky, InvalidArgument, InvalidDefinition
-from hypothesis.internal.compat import PYPY
 from hypothesis.internal.entropy import deterministic_PRNG
 from hypothesis.stateful import (
     Bundle,
@@ -38,7 +37,7 @@ from hypothesis.strategies import binary, data, integers, just, lists
 from tests.common.utils import capture_out, validate_deprecation
 from tests.nocover.test_stateful import DepthMachine
 
-NO_BLOB_SETTINGS = Settings(print_blob=False)
+NO_BLOB_SETTINGS = Settings(print_blob=False, phases=tuple(Phase)[:-1])
 
 
 class MultipleRulesSameFuncMachine(RuleBasedStateMachine):
@@ -168,7 +167,8 @@ TestMachineWithConsumingRule = MachineWithConsumingRule.TestCase
 def test_multiple():
     none = multiple()
     some = multiple(1, 2.01, "3", b"4", 5)
-    assert len(none.values) == 0 and len(some.values) == 5
+    assert len(none.values) == 0
+    assert len(some.values) == 5
     assert set(some.values) == {1, 2.01, "3", b"4", 5}
 
 
@@ -426,7 +426,7 @@ def test_can_explicitly_call_functions_when_precondition_not_satisfied():
         @precondition(lambda self: False)
         @rule()
         def test_blah(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def test_foo(self):
@@ -445,7 +445,7 @@ def test_invariant():
 
         @invariant()
         def test_blah(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def do_stuff(self):
@@ -487,12 +487,12 @@ def test_invariant_precondition():
         @invariant()
         @precondition(lambda _: False)
         def an_invariant(self):
-            raise ValueError()
+            raise ValueError
 
         @precondition(lambda _: False)
         @invariant()
         def another_invariant(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def do_stuff(self):
@@ -562,7 +562,7 @@ def test_multiple_invariants():
         @precondition(lambda self: self.first_invariant_ran)
         @invariant()
         def invariant_2(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def do_stuff(self):
@@ -583,7 +583,7 @@ def test_explicit_invariant_call_with_precondition():
         @precondition(lambda self: False)
         @invariant()
         def test_blah(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def test_foo(self):
@@ -604,7 +604,7 @@ def test_invariant_checks_initial_state_if_no_initialize_rules():
         @invariant()
         def test_blah(self):
             if self.num == 0:
-                raise ValueError()
+                raise ValueError
 
         @rule()
         def test_foo(self):
@@ -623,7 +623,7 @@ def test_invariant_failling_present_in_falsifying_example():
 
         @invariant()
         def invariant_1(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def rule_1(self):
@@ -646,7 +646,7 @@ state.teardown()
 
 
 def test_invariant_present_in_falsifying_example():
-    @Settings(print_blob=False)
+    @Settings(print_blob=False, phases=tuple(Phase)[:-1])
     class BadRuleWithGoodInvariants(RuleBasedStateMachine):
         def __init__(self):
             super().__init__()
@@ -673,12 +673,12 @@ def test_invariant_present_in_falsifying_example():
         def rule_1(self):
             self.num += 1
             if self.num == 2:
-                raise ValueError()
+                raise ValueError
 
     with pytest.raises(ValueError) as err:
         run_state_machine_as_test(BadRuleWithGoodInvariants)
 
-    expected = """\
+    expected = """
 Falsifying example:
 state = BadRuleWithGoodInvariants()
 state.invariant_1()
@@ -690,18 +690,10 @@ state.invariant_1()
 state.invariant_2()
 state.invariant_3()
 state.rule_1()
-state.teardown()"""
+state.teardown()
+""".strip()
 
-    if PYPY or sys.gettrace():  # explain mode disabled in these cases
-        result = "\n".join(err.value.__notes__)
-    else:
-        # Non-PyPy runs include explain mode, but we skip the final line because
-        # it includes the absolute path, which of course varies between machines.
-        expected += """
-Explanation:
-    These lines were always and only run by failing examples:"""
-        result = "\n".join(err.value.__notes__[:-1])
-
+    result = "\n".join(err.value.__notes__).strip()
     assert expected == result
 
 
@@ -804,7 +796,7 @@ def test_prints_equal_values_with_correct_variable_name():
 def test_initialize_rule():
     @Settings(max_examples=1000)
     class WithInitializeRules(RuleBasedStateMachine):
-        initialized = []
+        initialized: ClassVar = []
 
         @initialize()
         def initialize_a(self):
@@ -917,7 +909,7 @@ def test_initialize_rule_cannot_be_double_applied():
 
 def test_initialize_rule_in_state_machine_with_inheritance():
     class ParentStateMachine(RuleBasedStateMachine):
-        initialized = []
+        initialized: ClassVar = []
 
         @initialize()
         def initialize_a(self):
@@ -981,7 +973,7 @@ def test_steps_printed_despite_pytest_fail():
     class RaisesProblem(RuleBasedStateMachine):
         @rule()
         def oops(self):
-            pytest.fail()
+            pytest.fail("note that this raises a BaseException")
 
     with pytest.raises(Failed) as err:
         run_state_machine_as_test(RaisesProblem)
@@ -1192,3 +1184,34 @@ def test_deprecated_target_consumes_bundle():
     # definition-time already anyway, so it's not *worse* than the status quo.
     with validate_deprecation():
         rule(target=consumes(Bundle("b")))
+
+
+@Settings(stateful_step_count=5)
+class MinStepsMachine(RuleBasedStateMachine):
+    @initialize()
+    def init_a(self):
+        self.a = 0
+
+    @rule()
+    def inc(self):
+        self.a += 1
+
+    @invariant()
+    def not_too_many_steps(self):
+        assert self.a < 10
+
+    def teardown(self):
+        assert self.a >= 2
+
+
+def test_min_steps_argument():
+    # You must pass a non-negative integer...
+    for n_steps in (-1, "nan", 5.0):
+        with pytest.raises(InvalidArgument):
+            run_state_machine_as_test(MinStepsMachine, _min_steps=n_steps)
+
+    # and if you do, we'll take at least that many steps
+    run_state_machine_as_test(MinStepsMachine, _min_steps=3)
+
+    # (oh, and it's OK if you ask for more than we're actually going to take)
+    run_state_machine_as_test(MinStepsMachine, _min_steps=20)

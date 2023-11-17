@@ -47,7 +47,7 @@ Supported versions
 There is quite a lot of variation between pandas versions. We only
 commit to supporting the latest version of pandas, but older minor versions are
 supported on a "best effort" basis.  Hypothesis is currently tested against
-and confirmed working with every Pandas minor version from 1.0 through to 1.5.
+and confirmed working with every Pandas minor version from 1.1 through to 2.0.
 
 Releases that are not the latest patch release of their minor version are not
 tested or officially supported, but will probably also work unless you hit a
@@ -58,10 +58,6 @@ pandas bug.
 ---------
 Array API
 ---------
-
-.. tip::
-   The Array API standard is not yet finalised, so this module will make breaking
-   changes if necessary to support newer versions of the standard.
 
 Hypothesis offers strategies for `Array API <https://data-apis.org/>`_ adopting
 libraries in the ``hypothesis.extra.array_api`` package. See :issue:`3037` for
@@ -75,9 +71,6 @@ The resulting namespace contains all our familiar strategies like
 :func:`~xps.arrays` and :func:`~xps.from_dtype`, but based on the Array API
 standard semantics and returning objects from the ``xp`` module:
 
-..
-    TODO: for next released xp version, include complex_dtypes here
-
 .. automodule:: xps
    :members:
         from_dtype,
@@ -90,6 +83,7 @@ standard semantics and returning objects from the ``xp`` module:
         integer_dtypes,
         unsigned_integer_dtypes,
         floating_dtypes,
+        complex_dtypes,
         valid_tuple_axes,
         broadcastable_shapes,
         mutually_broadcastable_shapes,

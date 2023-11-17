@@ -9,13 +9,14 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import datetime
-import os
 import sys
 import types
+from pathlib import Path
 
 import sphinx_rtd_theme
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
+root = Path(__file__).parent.parent
+sys.path.append(str(root / "src"))
 
 
 autodoc_member_order = "bysource"
@@ -41,20 +42,26 @@ master_doc = "index"
 # General information about the project.
 project = "Hypothesis"
 author = "David R. MacIver"
-copyright = f"2013-{datetime.datetime.utcnow().year}, {author}"
+copyright = f"2013-{datetime.date.today().year}, {author}"
 
 _d = {}
-with open(
-    os.path.join(os.path.dirname(__file__), "..", "src", "hypothesis", "version.py")
-) as f:
-    exec(f.read(), _d)
-    version = _d["__version__"]
-    release = _d["__version__"]
+_version_file = root.joinpath("src", "hypothesis", "version.py")
+exec(_version_file.read_text(encoding="utf-8"), _d)
+version = _d["__version__"]
+release = _d["__version__"]
 
 
 def setup(app):
-    if os.path.isfile(os.path.join(os.path.dirname(__file__), "..", "RELEASE.rst")):
+    if root.joinpath("RELEASE.rst").is_file():
         app.tags.add("has_release_file")
+
+    # Workaround for partial-initialization problem when autodoc imports libcst
+    import libcst
+
+    import hypothesis.extra.codemods
+
+    assert libcst
+    assert hypothesis.extra.codemods
 
     # patch in mock array_api namespace so we can autodoc it
     from hypothesis.extra.array_api import (
@@ -104,9 +111,10 @@ intersphinx_mapping = {
     "redis": ("https://redis-py.readthedocs.io/en/stable/", None),
     "attrs": ("https://www.attrs.org/en/stable/", None),
     "sphinx": ("https://www.sphinx-doc.org/en/master/", None),
+    "IPython": ("https://ipython.readthedocs.io/en/stable/", None),
 }
 
-autodoc_mock_imports = ["numpy", "pandas", "redis", "django"]
+autodoc_mock_imports = ["numpy", "pandas", "redis", "django", "pytz"]
 
 codeautolink_autodoc_inject = False
 codeautolink_global_preface = """

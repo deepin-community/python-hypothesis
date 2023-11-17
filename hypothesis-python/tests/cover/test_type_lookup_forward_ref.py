@@ -32,7 +32,7 @@ from hypothesis.errors import ResolutionFailed
 from tests.common import utils
 
 if TYPE_CHECKING:
-    from tests.common.utils import ExcInfo  # we just need any type  # noqa: F401
+    from tests.common.utils import ExcInfo  # we just need any type
 
 # Correct:
 
@@ -54,7 +54,7 @@ def test_bound_correct_forward_ref(built):
     assert isinstance(built, int)
 
 
-# Alises:
+# Aliases:
 
 _Alias = TypeVar("_Alias ", bound="OurAlias")
 
@@ -134,7 +134,7 @@ def test_bound_type_cheking_only_forward_ref():
         st.builds(typechecking_only_fun).example()
 
 
-def test_bound_type_cheking_only_forward_ref_wrong_type():
+def test_bound_type_checking_only_forward_ref_wrong_type():
     """We should check ``ForwardRef`` parameter name correctly."""
     with utils.temp_registered(ForwardRef("WrongType"), st.just(1)):
         with pytest.raises(ResolutionFailed):

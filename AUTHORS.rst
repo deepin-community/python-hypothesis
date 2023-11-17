@@ -14,11 +14,13 @@ their individual contributions.
 * `Adam Sven Johnson <https://www.github.com/pkqk>`_
 * `Afrida Tabassum <https://github.com/oxfordhalfblood>`_ (afrida@gmail.com)
 * `Afonso Silva <https://github.com/ajcerejeira>`_ (ajcerejeira@gmail.com)
+* `Agustín Covarrubias <https://github.com/agucova>`_ (gh@agucova.dev)
 * `Akash Suresh <https://www.github.com/akash-suresh>`_ (akashsuresh36@gmail.com)
 * `Alex Gaynor <https://github.com/alex>`_
 * `Alex Stapleton <https://www.github.com/public>`_
 * `Alex Willmer <https://github.com/moreati>`_ (alex@moreati.org.uk)
 * `Andrea Pierré <https://www.github.com/kir0ul>`_
+* `Andrea Reina <https://www.github.com/andreareina>`_
 * `Ben Anhalt <https://github.com/benanhalt>`_
 * `Ben Peterson <https://github.com/killthrush>`_ (killthrush@hotmail.com)
 * `Benjamin Lee <https://github.com/Benjamin-Lee>`_ (benjamindlee@me.com)
@@ -29,6 +31,7 @@ their individual contributions.
 * `Bryant Eisenbach <https://github.com/fubuloubu>`_
 * `Buck Evan, copyright Google LLC <https://github.com/bukzor>`_
 * `Cameron McGill <https://www.github.com/Cameron-JM>`_
+* `Carl Meyer <https://www.github.com/carljm>`_
 * `Charles O'Farrell <https://www.github.com/charleso>`_
 * `Charlie Tanksley <https://www.github.com/charlietanksley>`_
 * `Chase Garner <https://www.github.com/chasegarner>`_ (chase@garner.red)
@@ -60,6 +63,7 @@ their individual contributions.
 * `Felix Sheldon <https://www.github.com/darkpaw>`_
 * `Florian Bruhin <https://www.github.com/The-Compiler>`_
 * `follower <https://www.github.com/follower>`_
+* `Francesc Elies <https://www.github.com/FrancescElies>`_
 * `Gabe Joseph <https://github.com/gjoseph92>`_
 * `Gary Donovan <https://www.github.com/garyd203>`_
 * `George Macon <https://www.github.com/gmacon>`_
@@ -69,6 +73,7 @@ their individual contributions.
 * `Gregory Petrosyan <https://github.com/flyingmutant>`_
 * `Grzegorz Zieba <https://github.com/gzaxel>`_ (g.zieba@erax.pl)
 * `Grigorios Giannakopoulos <https://github.com/grigoriosgiann>`_
+* `Hal Blackburn <https://github.com/h4l>`_
 * `Hugo van Kemenade <https://github.com/hugovk>`_
 * `Humberto Rocha <https://github.com/humrochagf>`_
 * `Ilya Lebedev <https://github.com/melevir>`_ (melevir@gmail.com)
@@ -78,6 +83,8 @@ their individual contributions.
 * `Jakub Nabaglo <https://github.com/nbgl>`_ (j@nab.gl)
 * `James Lamb <https://github.com/jameslamb>`_
 * `Jenny Rouleau <https://github.com/jennyrou>`_
+* `Jens Heinrich <https://github.com/JensHeinrich>`_
+* `Jens Tröger <https://github.com/jenstroeger>`_
 * `Jeremy Thurgood <https://github.com/jerith>`_
 * `J.J. Green <http://soliton.vm.bytemark.co.uk/pub/jjg/>`_
 * `JP Viljoen <https://github.com/froztbyte>`_ (froztbyte@froztbyte.net)
@@ -101,6 +108,7 @@ their individual contributions.
 * `Lampros Mountrakis <https://www.github.com/lmount>`_
 * `Lea Provenzano <https://github.com/leaprovenzano>`_
 * `Lee Begg <https://www.github.com/llnz2>`_
+* `Liam DeVoe <https://github.com/tybug>`_
 * `Libor Martínek <https://github.com/bibajz>`_
 * `Lisa Goeller <https://www.github.com/lgoeller>`_
 * `Louis Taylor <https://github.com/kragniz>`_
@@ -110,6 +118,7 @@ their individual contributions.
 * `marekventur <https://www.github.com/marekventur>`_
 * `Marius Gedminas <https://www.github.com/mgedmin>`_ (marius@gedmin.as)
 * `Markus Unterwaditzer <https://github.com/untitaker>`_ (markus@unterwaditzer.net)
+* `Mateusz Sokół <https://github.com/mtsokol>`_
 * `Mathieu Paturel <https://github.com/math2001>`_ (mathieu.paturel@gmail.com)
 * `Matt Bachmann <https://www.github.com/bachmann1234>`_ (bachmann.matt@gmail.com)
 * `Matthew Barber <https://www.github.com/honno>`_ (quitesimplymatt@gmail.com)
@@ -121,7 +130,9 @@ their individual contributions.
 * `Munir Abdinur <https://www.github.com/mabdinur>`_
 * `Nicholas Chammas <https://www.github.com/nchammas>`_
 * `Nick Anyos <https://www.github.com/NickAnyos>`_
-* `Nicolas Ganz <https://www.github.com/ThunderKey>`_
+* `Nick Collins <https://github.com/nickcollins>` _
+* `Nick Muoh <https://github.com/OdinTech3>`_ (nickspirit3@gmail.com)
+* `Nicolas Erni <https://www.github.com/ThunderKey>`_
 * `Nikita Sobolev <https://github.com/sobolevn>`_ (mail@sobolevn.me)
 * `Oleg Höfling <https://github.com/hoefling>`_ (oleg.hoefling@gmail.com)
 * `Paul Ganssle <https://ganssle.io>`_ (paul@ganssle.io)
@@ -134,6 +145,7 @@ their individual contributions.
 * `Phillip Schanely <https://github.com/pschanely>`_ (pschanely@gmail.com)
 * `Pierre-Jean Campigotto <https://github.com/PJCampi>`_
 * `Przemek Konopko <https://github.com/soutys>`_
+* `Reagan Lee <https://github.com/reaganjlee>`_
 * `Richard Boulton <https://www.github.com/rboulton>`_ (richard@tartarus.org)
 * `Richard Scholtens <https://github.com/richardscholtens>`_ (richardscholtens2@gmail.com)
 * `Robert Howlett <https://github.com/jebob>`_
@@ -151,6 +163,7 @@ their individual contributions.
 * `Sanyam Khurana <https://github.com/CuriousLearner>`_
 * `Saul Shanabrook <https://www.github.com/saulshanabrook>`_ (s.shanabrook@gmail.com)
 * `Sebastiaan Zeeff <https://github.com/SebastiaanZ>`_ (sebastiaan.zeeff@ordina.nl)
+* `Sharyar Memon <https://github.com/sharyar>`_ (smemon.cal@gmail.com)
 * `Shlok Gandhi <https://github.com/shlok57>`_ (shlok.gandhi@gmail.com)
 * `Sogata Ray <https://github.com/rayardinanda>`_ (rayardinanda@gmail.com)
 * `Stuart Cook <https://www.github.com/Zalathar>`_

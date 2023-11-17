@@ -37,17 +37,18 @@ import attr
 import click
 import pytest
 
-from hypothesis import assume
+from hypothesis import HealthCheck, assume, settings
 from hypothesis.errors import InvalidArgument, Unsatisfiable
 from hypothesis.extra import cli, ghostwriter
 from hypothesis.internal.compat import BaseExceptionGroup
 from hypothesis.strategies import builds, from_type, just, lists
+from hypothesis.strategies._internal.core import from_regex
 from hypothesis.strategies._internal.lazy import LazyStrategy
 
 varied_excepts = pytest.mark.parametrize("ex", [(), ValueError, (TypeError, re.error)])
 
 
-def get_test_function(source_code):
+def get_test_function(source_code, settings_decorator=lambda fn: fn):
     # A helper function to get the dynamically-defined test function.
     # Note that this also tests that the module is syntatically-valid,
     # AND free from undefined names, import problems, and so on.
@@ -63,7 +64,7 @@ def get_test_function(source_code):
         if k.startswith(("test_", "Test")) and not isinstance(v, ModuleType)
     ]
     assert len(tests) == 1, tests
-    return tests[0]
+    return settings_decorator(tests[0])
 
 
 @pytest.mark.parametrize(
@@ -222,7 +223,7 @@ def test_ghostwriter_unittest_style(func, ex):
     assert issubclass(get_test_function(source_code), unittest.TestCase)
 
 
-def no_annotations(foo=None, bar=False):
+def no_annotations(foo=None, *, bar=False):
     pass
 
 
@@ -341,8 +342,9 @@ def test_run_ghostwriter_roundtrip():
         "lambda v: st.lists(v, max_size=2) | st.dictionaries(st.text(), v, max_size=2)"
         ", max_leaves=2)",
     )
+    s = settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
     try:
-        get_test_function(source_code)()
+        get_test_function(source_code, settings_decorator=s)()
     except (AssertionError, ValueError, BaseExceptionGroup):
         pass
 
@@ -350,7 +352,7 @@ def test_run_ghostwriter_roundtrip():
     source_code = source_code.replace(
         "st.floats()", "st.floats(allow_nan=False, allow_infinity=False)"
     )
-    get_test_function(source_code)()
+    get_test_function(source_code, settings_decorator=s)()
 
 
 @varied_excepts
@@ -431,6 +433,16 @@ def test_unrepr_identity_elem():
             lists(builds(Decimal)),
             {("decimal", "Decimal")},
         ),
+        # find the needed import for from_regex if needed
+        (
+            from_regex(re.compile(".+")),
+            {"re"},
+        ),
+        # but don't add superfluous imports
+        (
+            from_regex(".+"),
+            set(),
+        ),
     ],
 )
 def test_get_imports_for_strategy(strategy, imports):
@@ -451,7 +463,8 @@ def temp_script_file():
             def say_hello():
                 print("Hello world!")
             """
-        )
+        ),
+        encoding="utf-8",
     )
     yield p
     p.unlink()
@@ -471,7 +484,8 @@ def temp_script_file_with_py_function():
             def py():
                 print('A function named "py" has been called')
             """
-        )
+        ),
+        encoding="utf-8",
     )
     yield p
     p.unlink()
@@ -501,7 +515,7 @@ def test_obj_name(temp_script_file, temp_script_file_with_py_function):
         cli.obj_name(str(temp_script_file))
     assert e.match(
         "Remember that the ghostwriter should be passed the name of a module, not a file."
-        + f"\n\tTry: hypothesis write {temp_script_file.stem}"
+        f"\n\tTry: hypothesis write {temp_script_file.stem}"
     )
     # File names of modules (strings ending in ".py") that define a py function should succeed
     assert isinstance(

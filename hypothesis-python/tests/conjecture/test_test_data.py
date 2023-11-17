@@ -90,10 +90,19 @@ def test_can_mark_invalid():
     assert x.status == Status.INVALID
 
 
+def test_can_mark_invalid_with_why():
+    x = ConjectureData.for_buffer(b"")
+    with pytest.raises(StopTest):
+        x.mark_invalid("some reason")
+    assert x.frozen
+    assert x.status == Status.INVALID
+    assert x.events == {"some reason"}
+
+
 class BoomStrategy(SearchStrategy):
     def do_draw(self, data):
         data.draw_bytes(1)
-        raise ValueError()
+        raise ValueError
 
 
 def test_closes_interval_on_error_in_strategy():
@@ -120,16 +129,16 @@ def test_does_not_double_freeze_in_interval_close():
 def test_triviality():
     d = ConjectureData.for_buffer([1, 0, 1])
 
-    d.start_example(1)
+    d.start_example(label=1)
     d.draw_bits(1)
     d.draw_bits(1)
-    d.stop_example(1)
+    d.stop_example()
 
     d.write(bytes([2]))
     d.freeze()
 
     def eg(u, v):
-        return [ex for ex in d.examples if ex.start == u and ex.end == v][0]
+        return next(ex for ex in d.examples if ex.start == u and ex.end == v)
 
     assert not eg(0, 2).trivial
     assert not eg(0, 1).trivial
@@ -228,12 +237,12 @@ def test_can_observe_draws():
         def __init__(self):
             self.log = []
 
-        def draw_bits(self, *args):
-            self.log.append(("draw",) + args)
+        def draw_bits(self, n_bits: int, *, forced: bool, value: int) -> None:
+            self.log.append(("draw", n_bits, forced, value))
 
         def conclude_test(self, *args):
             assert x.frozen
-            self.log.append(("concluded",) + args)
+            self.log.append(("concluded", *args))
 
     observer = LoggingObserver()
     x = ConjectureData.for_buffer(bytes([1, 2, 3]), observer=observer)
@@ -452,13 +461,13 @@ def test_example_equality():
     examples = list(d.examples)
     for ex1, ex2 in itertools.combinations(examples, 2):
         assert ex1 != ex2
-        assert not (ex1 == ex2)
+        assert not (ex1 == ex2)  # noqa
 
     for ex in examples:
         assert ex == ex
-        not (ex != ex)
+        assert not (ex != ex)  # noqa
 
-        assert not (ex == "hello")
+        assert not (ex == "hello")  # noqa
         assert ex != "hello"
 
 

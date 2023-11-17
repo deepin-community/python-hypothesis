@@ -99,8 +99,6 @@ def fn_ktest(*fnkwargs):
     (ds.floats, {"exclude_max": True}),  # because max_value=None
     (ds.floats, {"min_value": 1.8, "width": 32}),
     (ds.floats, {"max_value": 1.8, "width": 32}),
-    (ds.complex_numbers, {"min_magnitude": 1.8, "width": 64}),
-    (ds.complex_numbers, {"max_magnitude": 1.8, "width": 64}),
     (ds.fractions, {"min_value": 2, "max_value": 1}),
     (ds.fractions, {"min_value": math.nan}),
     (ds.fractions, {"max_value": math.nan}),
@@ -130,6 +128,18 @@ def fn_ktest(*fnkwargs):
     (ds.text, {"alphabet": ds.sampled_from([123, 456])}),
     (ds.text, {"alphabet": ds.builds(lambda: "abc")}),
     (ds.text, {"alphabet": ds.builds(lambda: 123)}),
+    (ds.from_regex, {"regex": 123}),
+    (ds.from_regex, {"regex": b"abc", "alphabet": "abc"}),
+    (ds.from_regex, {"regex": b"abc", "alphabet": b"def"}),
+    (ds.from_regex, {"regex": "abc", "alphabet": "def"}),
+    (ds.from_regex, {"regex": "[abc]", "alphabet": "def"}),
+    (ds.from_regex, {"regex": "[a-d]", "alphabet": "def"}),
+    (ds.from_regex, {"regex": "[f-z]", "alphabet": "def"}),
+    (ds.from_regex, {"regex": "[ab]x[de]", "alphabet": "abcdef"}),
+    (ds.from_regex, {"regex": "...", "alphabet": ds.builds(lambda: "a")}),
+    (ds.from_regex, {"regex": "abc", "alphabet": ds.sampled_from("def")}),
+    (ds.from_regex, {"regex": "abc", "alphabet": ds.characters(min_codepoint=128)}),
+    (ds.from_regex, {"regex": "abc", "alphabet": 123}),
     (ds.binary, {"min_size": 10, "max_size": 9}),
     (ds.floats, {"min_value": math.nan}),
     (ds.floats, {"min_value": "0"}),
@@ -180,8 +190,14 @@ def fn_ktest(*fnkwargs):
     (ds.characters, {"min_codepoint": "1"}),
     (ds.characters, {"max_codepoint": -1}),
     (ds.characters, {"max_codepoint": "1"}),
-    (ds.characters, {"whitelist_categories": []}),
+    (ds.characters, {"categories": []}),
+    (ds.characters, {"categories": ["Nd"], "exclude_categories": ["Nd"]}),
     (ds.characters, {"whitelist_categories": ["Nd"], "blacklist_categories": ["Nd"]}),
+    (ds.characters, {"include_characters": "a", "blacklist_characters": "b"}),
+    (ds.characters, {"codec": 100}),
+    (ds.characters, {"codec": "this is not a valid codec name"}),
+    (ds.characters, {"codec": "ascii", "include_characters": "é"}),
+    (ds.characters, {"codec": "utf-8", "categories": "Cs"}),
     (ds.slices, {"size": None}),
     (ds.slices, {"size": "chips"}),
     (ds.slices, {"size": -1}),
@@ -267,8 +283,20 @@ def test_validates_keyword_arguments(fn, kwargs):
     (ds.text, {"alphabet": ds.just("a")}),
     (ds.text, {"alphabet": ds.sampled_from("abc")}),
     (ds.text, {"alphabet": ds.builds(lambda: "a")}),
-    (ds.characters, {"whitelist_categories": ["N"]}),
-    (ds.characters, {"blacklist_categories": []}),
+    (ds.characters, {"codec": "ascii"}),
+    (ds.characters, {"codec": "latin1"}),
+    (ds.characters, {"categories": ["N"]}),
+    (ds.characters, {"exclude_categories": []}),
+    (ds.characters, {"whitelist_characters": "a", "codec": "ascii"}),
+    (ds.characters, {"blacklist_characters": "a"}),
+    (ds.characters, {"whitelist_categories": ["Nd"]}),
+    (ds.characters, {"blacklist_categories": ["Nd"]}),
+    (ds.from_regex, {"regex": "abc", "alphabet": "abc"}),
+    (ds.from_regex, {"regex": "abc", "alphabet": "abcdef"}),
+    (ds.from_regex, {"regex": "[abc]", "alphabet": "abcdef"}),
+    (ds.from_regex, {"regex": "[a-f]", "alphabet": "abef"}),
+    (ds.from_regex, {"regex": "abc", "alphabet": ds.sampled_from("abc")}),
+    (ds.from_regex, {"regex": "abc", "alphabet": ds.characters(codec="ascii")}),
     (ds.ip_addresses, {}),
     (ds.ip_addresses, {"v": 4}),
     (ds.ip_addresses, {"v": 6}),
@@ -358,7 +386,8 @@ def test_is_in_bounds(x):
 
 @given(ds.fractions(min_value=-1, max_value=1, max_denominator=1000))
 def test_fraction_is_in_bounds(x):
-    assert -1 <= x <= 1 and abs(x.denominator) <= 1000
+    assert -1 <= x <= 1
+    assert abs(x.denominator) <= 1000
 
 
 @given(ds.fractions(min_value=fractions.Fraction(1, 2)))
@@ -491,7 +520,8 @@ def test_data_explicitly_rejects_non_strategies(data, value, label):
 
 @given(ds.integers().filter(bool).filter(lambda x: x % 3))
 def test_chained_filter(x):
-    assert x and x % 3
+    assert x
+    assert x % 3
 
 
 def test_chained_filter_tracks_all_conditions():

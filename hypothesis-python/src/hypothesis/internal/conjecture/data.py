@@ -21,6 +21,7 @@ from typing import (
     Iterable,
     Iterator,
     List,
+    NoReturn,
     Optional,
     Sequence,
     Set,
@@ -239,7 +240,7 @@ class ExampleProperty:
                 self.bytes_read = blocks.endpoints[self.block_count]
                 self.block(self.block_count)
                 self.block_count += 1
-                self.__pop(False)
+                self.__pop(discarded=False)
             elif record >= START_EXAMPLE_RECORD:
                 self.__push(record - START_EXAMPLE_RECORD)
             else:
@@ -247,19 +248,19 @@ class ExampleProperty:
                     STOP_EXAMPLE_DISCARD_RECORD,
                     STOP_EXAMPLE_NO_DISCARD_RECORD,
                 )
-                self.__pop(record == STOP_EXAMPLE_DISCARD_RECORD)
+                self.__pop(discarded=record == STOP_EXAMPLE_DISCARD_RECORD)
         return self.finish()
 
     def __push(self, label_index: int) -> None:
         i = self.example_count
         assert i < len(self.examples)
-        self.start_example(i, label_index)
+        self.start_example(i, label_index=label_index)
         self.example_count += 1
         self.example_stack.append(i)
 
-    def __pop(self, discarded: bool) -> None:
+    def __pop(self, *, discarded: bool) -> None:
         i = self.example_stack.pop()
-        self.stop_example(i, discarded)
+        self.stop_example(i, discarded=discarded)
 
     def begin(self) -> None:
         """Called at the beginning of the run to initialise any
@@ -275,7 +276,7 @@ class ExampleProperty:
         """Called with each ``draw_bits`` call, with ``i`` the index of the
         corresponding block in ``self.examples.blocks``"""
 
-    def stop_example(self, i: int, discarded: bool) -> None:
+    def stop_example(self, i: int, *, discarded: bool) -> None:
         """Called at the end of each example, with ``i`` the
         index of the example and ``discarded`` being ``True`` if ``stop_example``
         was called with ``discard=True``."""
@@ -341,7 +342,7 @@ class ExampleRecord:
             self.labels.append(label)
         self.trail.append(START_EXAMPLE_RECORD + i)
 
-    def stop_example(self, discard: bool) -> None:
+    def stop_example(self, *, discard: bool) -> None:
         if discard:
             self.trail.append(STOP_EXAMPLE_DISCARD_RECORD)
         else:
@@ -381,7 +382,7 @@ class Examples:
         def start_example(self, i: int, label_index: int) -> None:
             self.starts[i] = self.bytes_read
 
-        def stop_example(self, i: int, discarded: bool) -> None:
+        def stop_example(self, i: int, *, discarded: bool) -> None:
             self.ends[i] = self.bytes_read
 
         def finish(self) -> Tuple[IntList, IntList]:
@@ -406,7 +407,7 @@ class Examples:
         def finish(self) -> FrozenSet[int]:
             return frozenset(self.result)
 
-        def stop_example(self, i: int, discarded: bool) -> None:
+        def stop_example(self, i: int, *, discarded: bool) -> None:
             if discarded:
                 self.result.add(i)
 
@@ -421,7 +422,7 @@ class Examples:
             if not self.examples.blocks.trivial(i):
                 self.nontrivial[self.example_stack[-1]] = 1
 
-        def stop_example(self, i: int, discarded: bool) -> None:
+        def stop_example(self, i: int, *, discarded: bool) -> None:
             if self.nontrivial[i]:
                 if self.example_stack:
                     self.nontrivial[self.example_stack[-1]] = 1
@@ -434,7 +435,7 @@ class Examples:
     trivial: FrozenSet[int] = calculated_example_property(_trivial)
 
     class _parentage(ExampleProperty):
-        def stop_example(self, i: int, discarded: bool) -> None:
+        def stop_example(self, i: int, *, discarded: bool) -> None:
             if i > 0:
                 self.result[i] = self.example_stack[-1]
 
@@ -745,7 +746,7 @@ class DataObserver:
         Note that this is called after ``freeze`` has completed.
         """
 
-    def draw_bits(self, n_bits: int, forced: bool, value: int) -> None:
+    def draw_bits(self, n_bits: int, *, forced: bool, value: int) -> None:
         """Called when ``draw_bits`` is called on on the
         observed ``ConjectureData``.
         * ``n_bits`` is the number of bits drawn.
@@ -776,6 +777,8 @@ class ConjectureResult:
     tags: FrozenSet[StructuralCoverageTag] = attr.ib()
     forced_indices: FrozenSet[int] = attr.ib(repr=False)
     examples: Examples = attr.ib(repr=False)
+    arg_slices: Set[Tuple[int, int]] = attr.ib(repr=False)
+    slice_comments: Dict[Tuple[int, int], str] = attr.ib(repr=False)
 
     index: int = attr.ib(init=False)
 
@@ -860,6 +863,11 @@ class ConjectureData:
         self.depth = -1
         self.__example_record = ExampleRecord()
 
+        # Slice indices for discrete reportable parts that which-parts-matter can
+        # try varying, to report if the minimal example always fails anyway.
+        self.arg_slices: Set[Tuple[int, int]] = set()
+        self.slice_comments: Dict[Tuple[int, int], str] = {}
+
         self.extra_information = ExtraInformation()
 
         self.start_example(TOP_LABEL)
@@ -893,6 +901,8 @@ class ConjectureData:
                 target_observations=self.target_observations,
                 tags=frozenset(self.tags),
                 forced_indices=frozenset(self.forced_indices),
+                arg_slices=self.arg_slices,
+                slice_comments=self.slice_comments,
             )
             assert self.__result is not None
             self.blocks.transfer_ownership(self.__result)
@@ -927,10 +937,10 @@ class ConjectureData:
         strategy.validate()
 
         if strategy.is_empty:
-            self.mark_invalid()
+            self.mark_invalid("strategy is empty")
 
         if self.depth >= MAX_DEPTH:
-            self.mark_invalid()
+            self.mark_invalid("max depth exceeded")
 
         if label is None:
             assert isinstance(strategy.label, int)
@@ -963,14 +973,14 @@ class ConjectureData:
         self.__example_record.start_example(label)
         self.labels_for_structure_stack.append({label})
 
-    def stop_example(self, discard: bool = False) -> None:
+    def stop_example(self, *, discard: bool = False) -> None:
         if self.frozen:
             return
         if discard:
             self.has_discards = True
         self.depth -= 1
         assert self.depth >= -1
-        self.__example_record.stop_example(discard)
+        self.__example_record.stop_example(discard=discard)
 
         labels_for_structure = self.labels_for_structure_stack.pop()
 
@@ -1072,7 +1082,7 @@ class ConjectureData:
         buf = bytes(buf)
         result = int_from_bytes(buf)
 
-        self.observer.draw_bits(n, forced is not None, result)
+        self.observer.draw_bits(n, forced=forced is not None, value=result)
         self.__example_record.draw_bits(n, forced)
 
         initial = self.index
@@ -1110,7 +1120,7 @@ class ConjectureData:
         self,
         status: Status,
         interesting_origin: Optional[InterestingOrigin] = None,
-    ) -> None:
+    ) -> NoReturn:
         assert (interesting_origin is None) or (status == Status.INTERESTING)
         self.__assert_not_frozen("conclude_test")
         self.interesting_origin = interesting_origin
@@ -1120,13 +1130,15 @@ class ConjectureData:
 
     def mark_interesting(
         self, interesting_origin: Optional[InterestingOrigin] = None
-    ) -> None:
+    ) -> NoReturn:
         self.conclude_test(Status.INTERESTING, interesting_origin)
 
-    def mark_invalid(self):
+    def mark_invalid(self, why: Optional[str] = None) -> NoReturn:
+        if why is not None:
+            self.note_event(why)
         self.conclude_test(Status.INVALID)
 
-    def mark_overrun(self):
+    def mark_overrun(self) -> NoReturn:
         self.conclude_test(Status.OVERRUN)
 
 

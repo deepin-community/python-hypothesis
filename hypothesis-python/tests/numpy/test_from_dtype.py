@@ -203,6 +203,9 @@ def test_arrays_gives_useful_error_on_inconsistent_time_unit():
         (complex, {"allow_nan": False}, lambda x: not np.isnan(x)),
         (complex, {"allow_infinity": False}, lambda x: not np.isinf(x)),
         (complex, {"allow_nan": False, "allow_infinity": False}, np.isfinite),
+        # Note we accept epsilon errors here as internally sqrt is used to draw
+        # complex numbers. sqrt on some platforms gets epsilon errors, which is
+        # too tricky to filter out and so - for now - we just accept them.
         (
             complex,
             {"min_magnitude": 1e3},
@@ -255,11 +258,10 @@ def test_float_subnormal_generation(allow_subnormal, width):
         lambda n: n != 0
     )
     smallest_normal = width_smallest_normals[width]
-    condition = lambda n: -smallest_normal < n < smallest_normal
     if allow_subnormal:
-        find_any(strat, condition)
+        find_any(strat, lambda n: -smallest_normal < n < smallest_normal)
     else:
-        assert_no_examples(strat, condition)
+        assert_no_examples(strat, lambda n: -smallest_normal < n < smallest_normal)
 
 
 @pytest.mark.parametrize("allow_subnormal", [False, True])
@@ -270,10 +272,13 @@ def test_complex_subnormal_generation(allow_subnormal, width):
         lambda n: n.real != 0 and n.imag != 0
     )
     smallest_normal = width_smallest_normals[width / 2]
-    condition = lambda n: (
-        -smallest_normal < n.real < smallest_normal
-        or -smallest_normal < n.imag < smallest_normal
-    )
+
+    def condition(n):
+        return (
+            -smallest_normal < n.real < smallest_normal
+            or -smallest_normal < n.imag < smallest_normal
+        )
+
     if allow_subnormal:
         find_any(strat, condition)
     else:
