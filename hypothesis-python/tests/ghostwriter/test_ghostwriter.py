@@ -404,7 +404,7 @@ def test_unrepr_identity_elem():
     # we can walk the strategy and collect all the objects to import.
     [
         # Lazy from_type() is handled without being unwrapped
-        (LazyStrategy(from_type, (enum.Enum,), {}), {("enum", "Enum")}),
+        (LazyStrategy(from_type, (enum.Enum,), {}), {"enum"}),
         # Mapped, filtered, and flatmapped check both sides of the method
         (
             builds(enum.Enum).map(Decimal),
@@ -500,7 +500,7 @@ def test_obj_name(temp_script_file, temp_script_file_with_py_function):
     )
     # Windows paths (strings including a "\") should also raise a meaningful UsageError
     with pytest.raises(click.exceptions.UsageError) as e:
-        cli.obj_name("mydirectory\\myscript.py")
+        cli.obj_name(R"mydirectory\myscript.py")
     assert e.match(
         "Remember that the ghostwriter should be passed the name of a module, not a path."
     )

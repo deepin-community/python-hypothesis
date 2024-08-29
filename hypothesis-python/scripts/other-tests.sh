@@ -26,12 +26,20 @@ $PYTEST tests/dpcontracts/
 pip uninstall -y dpcontracts
 
 pip install "$(grep 'fakeredis==' ../requirements/coverage.txt)"
+pip install "$(grep 'typing-extensions==' ../requirements/coverage.txt)"
 $PYTEST tests/redis/
 pip uninstall -y redis fakeredis
 
-pip install "$(grep 'typing-extensions==' ../requirements/coverage.txt)"
 $PYTEST tests/typing_extensions/
-pip uninstall -y typing_extensions
+if [[ "$HYPOTHESIS_PROFILE" != "crosshair" ]]; then
+  pip uninstall -y typing_extensions
+fi
+
+if [ "$(python -c 'import sys; print(sys.version_info[:2] >= (3, 9))')" = "True" ] ; then
+  pip install "$(grep 'annotated-types==' ../requirements/coverage.txt)"
+  $PYTEST tests/test_annotated_types.py
+  pip uninstall -y annotated-types
+fi
 
 pip install ".[lark]"
 pip install "$(grep -oE 'lark>=([0-9.]+)' ../hypothesis-python/setup.py | tr '>' =)"
@@ -56,14 +64,10 @@ if [ "$(python -c $'import platform, sys; print(sys.version_info.releaselevel ==
     pip install "$(grep 'numpy==' ../requirements/coverage.txt)"
   fi
 
-  case "$(python -c 'import platform; print(platform.python_implementation())')" in
-    PyPy|GraalVM)
-      ;;
-    *)
-      $PYTEST tests/array_api
-      $PYTEST tests/numpy
-  esac
-
   $PYTEST tests/ghostwriter/
-  pip uninstall -y black numpy
+  pip uninstall -y black
+
+  if [ "$HYPOTHESIS_PROFILE" != "crosshair" ] && [ "$(python -c "import platform; print(platform.python_implementation() not in {'PyPy', 'GraalVM'})")" = "True" ] ; then
+    $PYTEST tests/array_api tests/numpy
+  fi
 fi

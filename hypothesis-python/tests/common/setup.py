@@ -11,9 +11,9 @@
 import os
 from warnings import filterwarnings
 
-from hypothesis import Phase, Verbosity, settings
+from hypothesis import HealthCheck, Phase, Verbosity, settings
 from hypothesis._settings import not_set
-from hypothesis.errors import NonInteractiveExampleWarning
+from hypothesis.internal.conjecture.data import AVAILABLE_PROVIDERS
 from hypothesis.internal.coverage import IN_COVERAGE_TESTS
 
 
@@ -35,9 +35,6 @@ def run():
         ),
         category=UserWarning,
     )
-
-    # User-facing warning which does not apply to our own tests
-    filterwarnings("ignore", category=NonInteractiveExampleWarning)
 
     # We do a smoke test here before we mess around with settings.
     x = settings()
@@ -63,5 +60,18 @@ def run():
     settings.register_profile("speedy", settings(max_examples=5))
 
     settings.register_profile("debug", settings(verbosity=Verbosity.debug))
+
+    if "crosshair" in AVAILABLE_PROVIDERS:
+        settings.register_profile(
+            "crosshair",
+            backend="crosshair",
+            max_examples=20,
+            deadline=None,
+            suppress_health_check=(HealthCheck.too_slow, HealthCheck.filter_too_much),
+            report_multiple_bugs=False,
+        )
+
+    for backend in set(AVAILABLE_PROVIDERS) - {"hypothesis", "crosshair"}:
+        settings.register_profile(backend, backend=backend)
 
     settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))

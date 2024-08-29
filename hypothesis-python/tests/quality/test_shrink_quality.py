@@ -107,6 +107,10 @@ def test_minimize_sets_of_sets():
             assert any(s != t and t.issubset(s) for t in set_of_sets)
 
 
+def test_minimize_sets_sampled_from():
+    assert minimal(st.sets(st.sampled_from(range(10)), min_size=3)) == {0, 1, 2}
+
+
 def test_can_simplify_flatmap_with_bounded_left_hand_size():
     assert (
         minimal(booleans().flatmap(lambda x: lists(just(x))), lambda x: len(x) >= 10)
@@ -181,7 +185,7 @@ def test_minimize_multiple_elements_in_silly_large_int_range():
     desired_result = [0] * 20
 
     ir = integers(-(2**256), 2**256)
-    x = minimal(lists(ir), lambda x: len(x) >= 20, timeout_after=20)
+    x = minimal(lists(ir), lambda x: len(x) >= 20, settings(max_examples=10_000))
     assert x == desired_result
 
 
@@ -192,7 +196,6 @@ def test_minimize_multiple_elements_in_silly_large_int_range_min_is_not_dupe():
     x = minimal(
         lists(ir),
         lambda x: (assume(len(x) >= 20) and all(x[i] >= target[i] for i in target)),
-        timeout_after=60,
     )
     assert x == target
 
@@ -207,7 +210,6 @@ def test_find_large_union_list():
     result = minimal(
         lists(sets(integers(), min_size=1), min_size=1),
         large_mostly_non_overlapping,
-        timeout_after=120,
     )
     assert len(result) == 1
     union = reduce(set.union, result)
@@ -223,7 +225,6 @@ def test_containment(n, seed):
     iv = minimal(
         tuples(lists(integers()), integers()),
         lambda x: x[1] in x[0] and x[1] >= n,
-        timeout_after=60,
     )
     assert iv == ([n], n)
 
@@ -232,7 +233,6 @@ def test_duplicate_containment():
     ls, i = minimal(
         tuples(lists(integers()), integers()),
         lambda s: s[0].count(s[1]) > 1,
-        timeout_after=100,
     )
     assert ls == [0, 0]
     assert i == 0
@@ -392,3 +392,7 @@ def test_calculator_benchmark():
     x = minimal(expression, is_failing)
 
     assert x == ("/", 0, ("+", 0, 0))
+
+
+def test_one_of_slip():
+    assert minimal(st.integers(101, 200) | st.integers(0, 100)) == 101

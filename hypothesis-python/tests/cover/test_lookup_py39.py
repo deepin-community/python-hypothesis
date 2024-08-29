@@ -17,7 +17,12 @@ import pytest
 from hypothesis import given, strategies as st
 from hypothesis.errors import InvalidArgument
 
-from tests.common.debug import assert_all_examples, find_any
+from tests.common.debug import (
+    assert_all_examples,
+    assert_simple_property,
+    check_can_generate_examples,
+    find_any,
+)
 from tests.common.utils import temp_registered
 
 
@@ -40,7 +45,7 @@ def test_typing_Annotated(annotated_type, expected_strategy_repr):
 
 
 PositiveInt = typing.Annotated[int, st.integers(min_value=1)]
-MoreThenTenInt = typing.Annotated[PositiveInt, st.integers(min_value=10 + 1)]
+MoreThanTenInt = typing.Annotated[PositiveInt, st.integers(min_value=10 + 1)]
 WithTwoStrategies = typing.Annotated[int, st.integers(), st.none()]
 ExtraAnnotationNoStrategy = typing.Annotated[PositiveInt, "metadata"]
 
@@ -49,7 +54,7 @@ def arg_positive(x: PositiveInt):
     assert x > 0
 
 
-def arg_more_than_ten(x: MoreThenTenInt):
+def arg_more_than_ten(x: MoreThanTenInt):
     assert x > 10
 
 
@@ -84,7 +89,7 @@ def test_string_forward_ref_message():
     # See https://github.com/HypothesisWorks/hypothesis/issues/3016
     s = st.builds(User)
     with pytest.raises(InvalidArgument, match="`from __future__ import annotations`"):
-        s.example()
+        check_can_generate_examples(s)
 
 
 def test_issue_3080():
@@ -132,8 +137,7 @@ T = typing.TypeVar("T")
 
 @typing.runtime_checkable
 class Fooable(typing.Protocol[T]):
-    def foo(self):
-        ...
+    def foo(self): ...
 
 
 class FooableConcrete(tuple):
@@ -155,5 +159,20 @@ def test_lookup_registered_tuple():
     sentinel = object()
     typ = tuple[int]
     with temp_registered(tuple, st.just(sentinel)):
-        assert st.from_type(typ).example() is sentinel
-    assert st.from_type(typ).example() is not sentinel
+        assert_simple_property(st.from_type(typ), lambda v: v is sentinel)
+    assert_simple_property(st.from_type(typ), lambda v: v is not sentinel)
+
+
+sentinel = object()
+
+
+class LazyStrategyAnnotation:
+    __is_annotated_types_grouped_metadata__ = True
+
+    def __iter__(self):
+        return iter([st.just(sentinel)])
+
+
+@given(...)
+def test_grouped_protocol_strategy(x: typing.Annotated[int, LazyStrategyAnnotation()]):
+    assert x is sentinel

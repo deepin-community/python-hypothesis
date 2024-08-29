@@ -15,11 +15,9 @@ Build-Depends:
  python3-coverage,
  python3-dateutil <!nocheck> <!nodoc>,
  python3-django <!nodoc>,
- python3-exceptiongroup,
  python3-fakeredis <!nocheck>,
  python3-flaky <!nocheck>,
  python3-lark <!nodoc>,
- python3-mock <!nocheck>,
  python3-numpy <!nocheck> <!nodoc>,
  python3-pandas <!nocheck>,
  python3-pexpect <!nocheck>,
@@ -32,7 +30,7 @@ Build-Depends:
  python3-typing-extensions <!nocheck>,
  python3-tz <!nocheck>,
 Rules-Requires-Root: no
-Standards-Version: 4.6.2
+Standards-Version: 4.7.0
 Homepage: https://github.com/HypothesisWorks/hypothesis
 Vcs-Git: https://salsa.debian.org/python-team/packages/python-hypothesis.git
 Vcs-Browser: https://salsa.debian.org/python-team/packages/python-hypothesis

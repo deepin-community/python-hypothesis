@@ -17,10 +17,14 @@ from functools import wraps
 import pytest
 
 from hypothesis._settings import is_in_ci
+from hypothesis.errors import NonInteractiveExampleWarning
+from hypothesis.internal.compat import add_note
+from hypothesis.internal.conjecture import junkdrawer
 from hypothesis.internal.detection import is_hypothesis_test
 
 from tests.common import TIME_INCREMENT
 from tests.common.setup import run
+from tests.common.utils import raises_warning
 
 run()
 
@@ -53,6 +57,18 @@ def pytest_addoption(parser):
     arg = "--durations-min"
     if arg not in sum((a._long_opts for g in parser._groups for a in g.options), []):
         parser.addoption(arg, action="store", default=1.0)
+
+
+@pytest.fixture(scope="function", params=["warns", "raises"])
+def warns_or_raises(request):
+    """This runs the test twice: first to check that a warning is emitted
+    and execution continues successfully despite the warning; then to check
+    that the raised warning is handled properly.
+    """
+    if request.param == "raises":
+        return raises_warning
+    else:
+        return pytest.warns
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -96,6 +112,35 @@ def _consistently_increment_time(monkeypatch):
     _patch("sleep", sleep)
     monkeypatch.setattr(time_module, "freeze", freeze, raising=False)
 
+    # In the patched time regime, observing it causes it to increment. To avoid reintroducing
+    # non-determinism due to GC running at arbitrary times, we patch the GC observer
+    # to NOT increment time.
+
+    monkeypatch.setattr(junkdrawer, "_perf_counter", time)
+
+    if hasattr(gc, "callbacks"):
+        # ensure timer callback is added, then bracket it by freeze/unfreeze below
+        junkdrawer.gc_cumulative_time()
+
+        _was_frozen = [False]
+
+        def _freezer(*_):
+            _was_frozen[0] = frozen[0]
+            frozen[0] = True
+
+        def _unfreezer(*_):
+            frozen[0] = _was_frozen[0]
+
+        gc.callbacks.insert(0, _freezer)  # freeze before gc callback
+        gc.callbacks.append(_unfreezer)  # unfreeze after
+
+        yield
+
+        assert gc.callbacks.pop(0) == _freezer
+        assert gc.callbacks.pop() == _unfreezer
+    else:  # pragma: no cover # branch never taken in CPython
+        yield
+
 
 random_states_after_tests = {}
 independent_random = random.Random()
@@ -106,20 +151,20 @@ def pytest_runtest_call(item):
     # This hookwrapper checks for PRNG state leaks from Hypothesis tests.
     # See: https://github.com/HypothesisWorks/hypothesis/issues/1919
     if not (hasattr(item, "obj") and is_hypothesis_test(item.obj)):
-        yield
+        outcome = yield
     elif "pytest_randomly" in sys.modules:
         # See https://github.com/HypothesisWorks/hypothesis/issues/3041 - this
         # branch exists to make it easier on external contributors, but should
         # never run in our CI (because that would disable the check entirely).
         assert not is_in_ci()
-        yield
+        outcome = yield
     else:
         # We start by peturbing the state of the PRNG, because repeatedly
         # leaking PRNG state resets state_after to the (previously leaked)
         # state_before, and that just shows as "no use of random".
         random.seed(independent_random.randrange(2**32))
         before = random.getstate()
-        yield
+        outcome = yield
         after = random.getstate()
         if before != after:
             if after in random_states_after_tests:
@@ -129,3 +174,11 @@ def pytest_runtest_call(item):
                     "same global `random.getstate()`; this is probably a nasty bug!"
                 )
             random_states_after_tests[after] = item.nodeid
+
+    # Annotate usage of .example() with a hint about alternatives
+    if isinstance(getattr(outcome, "exception", None), NonInteractiveExampleWarning):
+        add_note(
+            outcome.exception,
+            "For hypothesis' own test suite, consider using one of the helper "
+            "methods in tests.common.debug instead.",
+        )

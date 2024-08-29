@@ -30,6 +30,7 @@ Some packages provide strategies directly:
 * :pypi:`hypothesis-csv` - strategy to generate CSV files.
 * :pypi:`hypothesis-networkx` - strategy to generate :pypi:`networkx` graphs.
 * :pypi:`hypothesis-bio` - strategies for bioinformatics data, such as DNA, codons, FASTA, and FASTQ formats.
+* :pypi:`hypothesis-rdkit` - strategies to generate RDKit molecules and representations such as SMILES and mol blocks
 * :pypi:`hypothesmith` - strategy to generate syntatically-valid Python code.
 
 Others provide a function to infer a strategy from some other schema:
@@ -55,6 +56,12 @@ Or some other custom integration, such as a :ref:`"hypothesis" entry point <entr
 -----------------
 Other cool things
 -----------------
+
+`Tyche <https://marketplace.visualstudio.com/items?itemName=HarrisonGoldstein.tyche>`__
+(`source <https://github.com/tyche-pbt>`__) is a VSCode extension which provides live
+insights into your property-based tests, including the distribution of generated inputs
+and the resulting code coverage.  You can `read the research paper here
+<https://harrisongoldste.in/papers/uist23.pdf>`__.
 
 :pypi:`schemathesis` is a tool for testing web applications built with `Open API / Swagger specifications <https://swagger.io/>`_.
 It reads the schema and generates test cases which will ensure that the application is compliant with its schema.
@@ -204,3 +211,55 @@ loading our pytest plugin from your ``conftest.py`` instead::
 
     echo "pytest_plugins = ['hypothesis.extra.pytestplugin']\n" > tests/conftest.py
     pytest -p "no:hypothesispytest" ...
+
+Another alternative, which we in fact use in our CI self-tests because it works
+well also with parallel tests, is to automatically start coverage early for all
+new processes if an environment variable is set.
+This automatic starting is set up by the PyPi package :pypi:`coverage_enable_subprocess`.
+
+This means all configuration must be done in ``.coveragerc``, and not on the
+command line::
+
+    [run]
+    parallel = True
+    source = ...
+
+Then, set the relevant environment variable and run normally::
+
+    python -m pip install coverage_enable_subprocess
+    export COVERAGE_PROCESS_START=$PATH/.coveragerc
+    pytest [-n auto] ...
+    coverage combine
+    coverage report
+
+
+.. _alternative-backends:
+
+-----------------------------------
+Alternative backends for Hypothesis
+-----------------------------------
+
+.. warning::
+
+   EXPERIMENTAL AND UNSTABLE.
+
+The importable name of a backend which Hypothesis should use to generate primitive
+types.  We aim to support heuristic-random, solver-based, and fuzzing-based backends.
+
+See :issue:`3086` for details, e.g. if you're interested in writing your own backend.
+(note that there is *no stable interface* for this; you'd be helping us work out
+what that should eventually look like, and we're likely to make regular breaking
+changes for some time to come)
+
+Using the prototype :pypi:`crosshair-tool` backend via :pypi:`hypothesis-crosshair`,
+a solver-backed test might look something like:
+
+.. code-block:: python
+
+    from hypothesis import given, settings, strategies as st
+
+
+    @settings(backend="crosshair")  # pip install hypothesis[crosshair]
+    @given(st.integers())
+    def test_needs_solver(x):
+        assert x != 123456789

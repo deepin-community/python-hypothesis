@@ -13,11 +13,13 @@ import sys
 import pytest
 
 from hypothesis import HealthCheck, assume, example, given, settings, strategies as st
-from hypothesis.internal.compat import ceil, floor, int_from_bytes, int_to_bytes
+from hypothesis.internal.compat import ceil, extract_bits, floor, int_to_bytes
 from hypothesis.internal.conjecture import floats as flt
 from hypothesis.internal.conjecture.data import ConjectureData
 from hypothesis.internal.conjecture.engine import ConjectureRunner
 from hypothesis.internal.floats import float_to_int
+
+from tests.conjecture.common import run_to_buffer
 
 EXPONENTS = list(range(flt.MAX_EXPONENT + 1))
 assert len(EXPONENTS) == 2**11
@@ -63,25 +65,6 @@ def test_double_reverse(i):
     assert flt.reverse64(j) == i
 
 
-@example(1.25)
-@example(1.0)
-@given(st.floats())
-def test_draw_write_round_trip(f):
-    d = ConjectureData.for_buffer(bytes(10))
-    flt.write_float(d, f)
-    d2 = ConjectureData.for_buffer(d.buffer)
-    g = flt.draw_float(d2)
-
-    if f == f:
-        assert f == g
-
-    assert float_to_int(f) == float_to_int(g)
-
-    d3 = ConjectureData.for_buffer(d2.buffer)
-    flt.draw_float(d3)
-    assert d3.buffer == d2.buffer
-
-
 @example(0.0)
 @example(2.5)
 @example(8.000000000000007)
@@ -97,7 +80,7 @@ def test_floats_round_trip(f):
     assert float_to_int(f) == float_to_int(g)
 
 
-@settings(suppress_health_check=[HealthCheck.too_slow])
+@settings(suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much])
 @example(1, 0.5)
 @given(st.integers(1, 2**53), st.floats(0, 1).filter(lambda x: x not in (0, 1)))
 def test_floats_order_worse_than_their_integral_part(n, g):
@@ -132,42 +115,41 @@ def test_fractional_floats_are_worse_than_one(f):
 
 
 def test_reverse_bits_table_reverses_bits():
-    def bits(x):
-        result = []
-        for _ in range(8):
-            result.append(x & 1)
-            x >>= 1
-        result.reverse()
-        return result
-
     for i, b in enumerate(flt.REVERSE_BITS_TABLE):
-        assert bits(i) == list(reversed(bits(b)))
+        assert extract_bits(i, width=8) == list(reversed(extract_bits(b, width=8)))
 
 
 def test_reverse_bits_table_has_right_elements():
     assert sorted(flt.REVERSE_BITS_TABLE) == list(range(256))
 
 
-def float_runner(start, condition):
-    def parse_buf(b):
-        return flt.lex_to_float(int_from_bytes(b))
+def float_runner(start, condition, *, kwargs=None):
+    kwargs = {} if kwargs is None else kwargs
+
+    @run_to_buffer
+    def buf(data):
+        data.draw_float(forced=start, **kwargs)
+        data.mark_interesting()
 
     def test_function(data):
-        f = flt.draw_float(data)
+        f = data.draw_float(**kwargs)
         if condition(f):
             data.mark_interesting()
 
     runner = ConjectureRunner(test_function)
-    runner.cached_test_function(bytes(1) + int_to_bytes(flt.float_to_lex(start), 8))
+    runner.cached_test_function(buf)
     assert runner.interesting_examples
     return runner
 
 
-def minimal_from(start, condition):
-    runner = float_runner(start, condition)
+def minimal_from(start, condition, *, kwargs=None):
+    kwargs = {} if kwargs is None else kwargs
+
+    runner = float_runner(start, condition, kwargs=kwargs)
     runner.shrink_interesting_examples()
     (v,) = runner.interesting_examples.values()
-    result = flt.draw_float(ConjectureData.for_buffer(v.buffer))
+    data = ConjectureData.for_buffer(v.buffer)
+    result = data.draw_float(**kwargs)
     assert condition(result)
     return result
 
@@ -233,3 +215,10 @@ def test_converts_floats_to_integer_form(f):
     runner.shrink_interesting_examples()
     (v,) = runner.interesting_examples.values()
     assert v.buffer[:-1] < buf
+
+
+def test_reject_out_of_bounds_floats_while_shrinking():
+    # coverage test for rejecting out of bounds floats while shrinking
+    kwargs = {"min_value": 103.0}
+    g = minimal_from(103.1, lambda x: x >= 100, kwargs=kwargs)
+    assert g == 103.0

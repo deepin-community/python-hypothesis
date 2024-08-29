@@ -13,7 +13,6 @@ from random import Random
 import pytest
 
 from hypothesis import HealthCheck, settings
-from hypothesis.internal.conjecture import utils as cu
 from hypothesis.internal.conjecture.engine import ConjectureData, ConjectureRunner
 from hypothesis.strategies._internal import SearchStrategy
 
@@ -34,14 +33,16 @@ class PoisonedTree(SearchStrategy):
         self.__p = p
 
     def do_draw(self, data):
-        if cu.biased_coin(data, self.__p):
+        if data.draw_boolean(self.__p):
             return data.draw(self) + data.draw(self)
         else:
             # We draw n as two separate calls so that it doesn't show up as a
             # single block. If it did, the heuristics that allow us to move
             # blocks around would fire and it would move right, which would
             # then allow us to shrink it more easily.
-            n = (data.draw_bits(16) << 16) | data.draw_bits(16)
+            n1 = data.draw_integer(0, 2**16 - 1) << 16
+            n2 = data.draw_integer(0, 2**16 - 1)
+            n = n1 | n2
             if n == MAX_INT:
                 return (POISON,)
             else:
