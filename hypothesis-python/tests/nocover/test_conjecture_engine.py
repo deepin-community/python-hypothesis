@@ -10,10 +10,9 @@
 
 from hypothesis import given, settings, strategies as st
 from hypothesis.database import InMemoryExampleDatabase
-from hypothesis.internal.compat import int_from_bytes
 from hypothesis.internal.conjecture.data import ConjectureData
 from hypothesis.internal.conjecture.engine import ConjectureRunner
-from hypothesis.internal.conjecture.shrinker import Shrinker, block_program
+from hypothesis.internal.conjecture.shrinker import Shrinker, node_program
 
 from tests.common.utils import counts_calls, non_covering_examples
 from tests.conjecture.common import run_to_buffer, shrinking_from
@@ -80,28 +79,10 @@ def test_can_discard(monkeypatch):
     assert len(x) == n
 
 
-def test_regression_1():
-    # This is a really hard to reproduce bug that previously triggered a very
-    # specific exception inside one of the shrink passes. It's unclear how
-    # useful this regression test really is, but nothing else caught the
-    # problem.
-    @run_to_buffer
-    def x(data):
-        data.write(b"\x01\x02")
-        data.write(b"\x01\x00")
-        v = data.draw_bits(41)
-        if v >= 512 or v == 254:
-            data.mark_interesting()
-
-    assert list(x)[:-2] == [1, 2, 1, 0, 0, 0, 0, 0]
-
-    assert int_from_bytes(x[-2:]) in (254, 512)
-
-
 @given(st.integers(0, 255), st.integers(0, 255))
 def test_cached_with_masked_byte_agrees_with_results(byte_a, byte_b):
     def f(data):
-        data.draw_bits(2)
+        data.draw_integer(0, 3)
 
     runner = ConjectureRunner(f)
 
@@ -118,25 +99,25 @@ def test_cached_with_masked_byte_agrees_with_results(byte_a, byte_b):
     assert (cached_a is cached_b) == (cached_a.buffer == data_b.buffer)
 
 
-def test_block_programs_fail_efficiently(monkeypatch):
+def test_node_programs_fail_efficiently(monkeypatch):
     # Create 256 byte-sized blocks. None of the blocks can be deleted, and
     # every deletion attempt produces a different buffer.
     @shrinking_from(bytes(range(256)))
     def shrinker(data):
         values = set()
         for _ in range(256):
-            v = data.draw_bits(8)
+            v = data.draw_integer(0, 2**8 - 1)
             values.add(v)
         if len(values) == 256:
             data.mark_interesting()
 
     monkeypatch.setattr(
-        Shrinker, "run_block_program", counts_calls(Shrinker.run_block_program)
+        Shrinker, "run_node_program", counts_calls(Shrinker.run_node_program)
     )
 
     shrinker.max_stall = 500
 
-    shrinker.fixate_shrink_passes([block_program("XX")])
+    shrinker.fixate_shrink_passes([node_program("XX")])
 
     assert shrinker.shrinks == 0
     assert 250 <= shrinker.calls <= 260
@@ -145,4 +126,4 @@ def test_block_programs_fail_efficiently(monkeypatch):
     # bit of wiggle room for implementation details.
     #   - Too many calls mean that failing steps are doing too much work.
     #   - Too few calls mean that this test is probably miscounting and buggy.
-    assert 250 <= Shrinker.run_block_program.calls <= 260
+    assert 250 <= Shrinker.run_node_program.calls <= 260

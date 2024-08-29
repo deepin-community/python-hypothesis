@@ -38,6 +38,7 @@ from tests.common.utils import (
     checks_deprecated_behaviour,
     counts_calls,
     fails_with,
+    skipif_emscripten,
     validate_deprecation,
 )
 
@@ -229,13 +230,13 @@ def test_settings_alone():
 """
 
 
-def test_settings_alone(testdir):
-    script = testdir.makepyfile(TEST_SETTINGS_ALONE)
-    result = testdir.runpytest(script)
+def test_settings_alone(pytester):
+    # Disable cacheprovider, since we don't need it and it's flaky on pyodide
+    script = pytester.makepyfile(TEST_SETTINGS_ALONE)
+    result = pytester.runpytest_inprocess(script, "-p", "no:cacheprovider")
     out = "\n".join(result.stdout.lines)
-    assert (
-        "Using `@settings` on a test without `@given` is completely pointless." in out
-    )
+    msg = "Using `@settings` on a test without `@given` is completely pointless."
+    assert msg in out
     assert "InvalidArgument" in out
     assert result.ret == 1
 
@@ -284,8 +285,9 @@ if __name__ == '__main__':
 """
 
 
+@skipif_emscripten
 def test_puts_the_database_in_the_home_dir_by_default(tmp_path):
-    script = tmp_path.joinpath("assertlocation.py")
+    script = tmp_path / "assertlocation.py"
     script.write_text(ASSERT_DATABASE_PATH, encoding="utf-8")
     subprocess.check_call([sys.executable, str(script)])
 
@@ -454,6 +456,7 @@ def test_derandomise_with_explicit_database_is_invalid():
         {"deadline": 0},
         {"deadline": True},
         {"deadline": False},
+        {"backend": "this_backend_does_not_exist"},
     ],
 )
 def test_invalid_settings_are_errors(kwargs):

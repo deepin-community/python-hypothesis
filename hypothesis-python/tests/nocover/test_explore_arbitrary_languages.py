@@ -23,17 +23,8 @@ from hypothesis import (
     settings,
     strategies as st,
 )
-from hypothesis.internal import escalation as esc
 from hypothesis.internal.conjecture.data import Status
 from hypothesis.internal.conjecture.engine import ConjectureRunner
-
-
-def setup_module(module):
-    esc.PREVENT_ESCALATION = True
-
-
-def teardown_module(module):
-    esc.PREVENT_ESCALATION = False
 
 
 @attr.s()
@@ -45,7 +36,7 @@ class Write:
 @attr.s()
 class Branch:
     bits = attr.ib()
-    children = attr.ib(default=attr.Factory(dict))
+    children = attr.ib(factory=dict)
 
 
 @attr.s()
@@ -83,11 +74,11 @@ def run_language_test_for(root, data, seed):
         node = root
         while not isinstance(node, Terminal):
             if isinstance(node, Write):
-                local_data.write(node.value)
+                local_data.draw_bytes(len(node.value), forced=node.value)
                 node = node.child
             else:
                 assert isinstance(node, Branch)
-                c = local_data.draw_bits(node.bits)
+                c = local_data.draw_integer(0, 2**node.bits - 1)
                 try:
                     node = node.children[c]
                 except KeyError:

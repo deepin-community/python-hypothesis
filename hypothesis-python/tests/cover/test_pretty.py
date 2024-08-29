@@ -48,14 +48,19 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
 import re
+import struct
 import warnings
 from collections import Counter, OrderedDict, defaultdict, deque
 from enum import Enum, Flag
+from functools import partial
 
 import pytest
 
+from hypothesis import given, strategies as st
+from hypothesis.control import current_build_context
 from hypothesis.internal.compat import PYPY
-from hypothesis.strategies._internal.numbers import SIGNALING_NAN
+from hypothesis.internal.conjecture.floats import float_to_lex
+from hypothesis.internal.floats import SIGNALING_NAN
 from hypothesis.vendor import pretty
 
 
@@ -600,13 +605,15 @@ def test_breakable_at_group_boundary():
     [
         (float("nan"), "nan"),
         (-float("nan"), "-nan"),
-        (SIGNALING_NAN, "nan  # Saw 1 signaling NaN"),
-        (-SIGNALING_NAN, "-nan  # Saw 1 signaling NaN"),
-        ((SIGNALING_NAN, SIGNALING_NAN), "(nan, nan)  # Saw 2 signaling NaNs"),
+        (SIGNALING_NAN, "struct.unpack('d', struct.pack('Q', 0x7ff8000000000001))[0]"),
+        (-SIGNALING_NAN, "struct.unpack('d', struct.pack('Q', 0xfff8000000000001))[0]"),
     ],
 )
 def test_nan_reprs(obj, rep):
     assert pretty.pretty(obj) == rep
+    assert float_to_lex(obj) == float_to_lex(
+        eval(rep, {"struct": struct, "nan": float("nan")})
+    )
 
 
 def _repr_call(*args, **kwargs):
@@ -683,3 +690,71 @@ class Obj:
 
 def test_supports_ipython_callback():
     assert pretty.pretty(Obj()) == "abc, \n  <>"
+
+
+def test_pretty_partial_with_cycle():
+    ls = []
+    p = partial(bool, ls)
+    assert pretty.pretty(p) == "functools.partial(bool, [])"
+    ls.append(p)
+    assert pretty.pretty(p) == "functools.partial(bool, [functools.partial(bool, ...)])"
+
+
+class InvalidSyntaxRepr:
+    def __init__(self, val=None) -> None:
+        self.val = val
+
+    def __repr__(self):
+        return "invalid syntax"
+
+
+class ValidSyntaxRepr:
+    def __init__(self, val=None) -> None:
+        self.val = val
+
+    def __repr__(self):
+        return "ValidSyntaxRepr(...)"
+
+
+@given(st.data())
+def test_pprint_with_call_or_repr_as_call(data):
+    # mapped pprint repr only triggers for failing examples - which makes an
+    # end to end test given hypothesis difficult. fake our way around it.
+    current_build_context().is_final = True
+
+    x = data.draw(st.none().map(InvalidSyntaxRepr))
+    p = pretty.RepresentationPrinter(context=current_build_context())
+    p.pretty(x)
+    assert p.getvalue() == "InvalidSyntaxRepr(None)"
+
+
+@given(st.just(InvalidSyntaxRepr()).map(ValidSyntaxRepr))
+def test_pprint_with_call_or_repr_as_repr(x):
+    p = pretty.RepresentationPrinter(context=current_build_context())
+    p.pretty(x)
+    assert p.getvalue() == "ValidSyntaxRepr(...)"
+
+
+@given(st.data())
+def test_pprint_map_with_cycle(data):
+    current_build_context().is_final = True
+    x = data.draw(st.just(ValidSyntaxRepr()).map(lambda x: x))
+
+    p = pretty.RepresentationPrinter(context=current_build_context())
+    p.pretty(x)
+    assert p.getvalue() == "ValidSyntaxRepr(...)"
+
+
+def test_pprint_large_integers():
+    p = pretty.RepresentationPrinter()
+    p.pretty(1234567890)
+    assert p.getvalue() == "1_234_567_890"
+
+
+def test_pprint_extremely_large_integers():
+    x = 10**5000  # repr fails with ddos error
+    p = pretty.RepresentationPrinter()
+    p.pretty(x)
+    got = p.getvalue()
+    assert got == f"{x:#_x}"  # hexadecimal with underscores
+    assert eval(got) == x

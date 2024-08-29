@@ -90,13 +90,28 @@ def test_can_mark_invalid():
     assert x.status == Status.INVALID
 
 
+@given(st.data(), st.integers(1, 100))
+def test_can_draw_weighted_integer_range(data, n):
+    weights = [1] * n + [0] * n
+    for _ in range(10):
+        # If the weights are working, then we'll never draw a value with weight=0
+        x = data.conjecture_data.draw_integer(1, 2 * n, weights=weights)
+        assert x <= n
+
+
+@given(st.binary(min_size=10))
+def test_can_draw_weighted_integer_range_2(buffer):
+    data = ConjectureData.for_buffer(buffer)
+    data.draw_integer(0, 7, weights=[1] * 8, shrink_towards=6)
+
+
 def test_can_mark_invalid_with_why():
     x = ConjectureData.for_buffer(b"")
     with pytest.raises(StopTest):
         x.mark_invalid("some reason")
     assert x.frozen
     assert x.status == Status.INVALID
-    assert x.events == {"some reason"}
+    assert x.events == {"invalid because": "some reason"}
 
 
 class BoomStrategy(SearchStrategy):
@@ -130,15 +145,18 @@ def test_triviality():
     d = ConjectureData.for_buffer([1, 0, 1])
 
     d.start_example(label=1)
-    d.draw_bits(1)
-    d.draw_bits(1)
+    d.draw(st.booleans())
+    d.draw(st.booleans())
     d.stop_example()
 
-    d.write(bytes([2]))
+    d.start_example(label=2)
+    d.draw_bytes(1, forced=bytes([2]))
+    d.stop_example()
+
     d.freeze()
 
     def eg(u, v):
-        return next(ex for ex in d.examples if ex.start == u and ex.end == v)
+        return next(ex for ex in d.examples if ex.ir_start == u and ex.ir_end == v)
 
     assert not eg(0, 2).trivial
     assert not eg(0, 1).trivial
@@ -148,20 +166,30 @@ def test_triviality():
 
 def test_example_depth_marking():
     d = ConjectureData.for_buffer(bytes(24))
-
     # These draw sizes are chosen so that each example has a unique length.
-    d.draw_bytes(2)
+    d.draw(st.binary(min_size=2, max_size=2))
     d.start_example("inner")
-    d.draw_bytes(3)
-    d.draw_bytes(6)
+    d.draw(st.binary(min_size=3, max_size=3))
+    d.draw(st.binary(min_size=6, max_size=6))
     d.stop_example()
-    d.draw_bytes(12)
+    d.draw(st.binary(min_size=12, max_size=12))
     d.freeze()
 
-    assert len(d.examples) == 6
+    assert len(d.examples) == 10
 
     depths = {(ex.length, ex.depth) for ex in d.examples}
-    assert depths == {(2, 1), (3, 2), (6, 2), (9, 1), (12, 1), (23, 0)}
+    assert depths == {
+        (2, 1),
+        (2, 2),
+        (3, 2),
+        (3, 3),
+        (6, 2),
+        (6, 3),
+        (9, 1),
+        (12, 1),
+        (12, 2),
+        (23, 0),
+    }
 
 
 def test_has_examples_even_when_empty():
@@ -174,10 +202,10 @@ def test_has_examples_even_when_empty():
 def test_has_cached_examples_even_when_overrun():
     d = ConjectureData.for_buffer(bytes(1))
     d.start_example(3)
-    d.draw_bits(1)
+    d.draw_boolean()
     d.stop_example()
     try:
-        d.draw_bits(1)
+        d.draw_boolean()
     except StopTest:
         pass
     assert d.status == Status.OVERRUN
@@ -185,21 +213,11 @@ def test_has_cached_examples_even_when_overrun():
     assert d.examples is d.examples
 
 
-def test_can_write_empty_string():
-    d = ConjectureData.for_buffer([1, 1, 1])
-    d.draw_bits(1)
-    d.write(b"")
-    d.draw_bits(1)
-    d.draw_bits(0, forced=0)
-    d.draw_bits(1)
-    assert d.buffer == bytes([1, 1, 1])
-
-
 def test_blocks_preserve_identity():
     n = 10
     d = ConjectureData.for_buffer([1] * 10)
     for _ in range(n):
-        d.draw_bits(1)
+        d.draw_boolean()
     d.freeze()
     blocks = [d.blocks[i] for i in range(n)]
     result = d.as_result()
@@ -210,10 +228,10 @@ def test_blocks_preserve_identity():
 def test_compact_blocks_during_generation():
     d = ConjectureData.for_buffer([1] * 10)
     for _ in range(5):
-        d.draw_bits(1)
+        d.draw_boolean()
     assert len(list(d.blocks)) == 5
     for _ in range(5):
-        d.draw_bits(1)
+        d.draw_boolean()
     assert len(list(d.blocks)) == 10
 
 
@@ -221,7 +239,7 @@ def test_handles_indices_like_a_list():
     n = 5
     d = ConjectureData.for_buffer([1] * n)
     for _ in range(n):
-        d.draw_bits(1)
+        d.draw_boolean()
     assert d.blocks[-1] is d.blocks[n - 1]
     assert d.blocks[-n] is d.blocks[0]
 
@@ -237,8 +255,11 @@ def test_can_observe_draws():
         def __init__(self):
             self.log = []
 
-        def draw_bits(self, n_bits: int, *, forced: bool, value: int) -> None:
-            self.log.append(("draw", n_bits, forced, value))
+        def draw_boolean(self, value: bool, *, was_forced: bool, kwargs: dict):
+            self.log.append(("draw_boolean", value, was_forced))
+
+        def draw_integer(self, value: int, *, was_forced: bool, kwargs: dict):
+            self.log.append(("draw_integer", value, was_forced))
 
         def conclude_test(self, *args):
             assert x.frozen
@@ -247,16 +268,16 @@ def test_can_observe_draws():
     observer = LoggingObserver()
     x = ConjectureData.for_buffer(bytes([1, 2, 3]), observer=observer)
 
-    x.draw_bits(1)
-    x.draw_bits(7, forced=10)
-    x.draw_bits(8)
+    x.draw_boolean()
+    x.draw_integer(0, 2**7 - 1, forced=10)
+    x.draw_integer(0, 2**8 - 1)
     with pytest.raises(StopTest):
         x.conclude_test(Status.INTERESTING, interesting_origin="neat")
 
     assert observer.log == [
-        ("draw", 1, False, 1),
-        ("draw", 7, True, 10),
-        ("draw", 8, False, 3),
+        ("draw_boolean", True, False),
+        ("draw_integer", 10, True),
+        ("draw_integer", 3, False),
         ("concluded", Status.INTERESTING, "neat"),
     ]
 
@@ -270,7 +291,7 @@ def test_calls_concluded_implicitly():
     observer = NoteConcluded()
 
     x = ConjectureData.for_buffer(bytes([1]), observer=observer)
-    x.draw_bits(1)
+    x.draw_boolean()
     x.freeze()
 
     assert observer.conclusion == (Status.VALID, None)
@@ -280,7 +301,7 @@ def test_handles_start_indices_like_a_list():
     n = 5
     d = ConjectureData.for_buffer([1] * n)
     for _ in range(n):
-        d.draw_bits(1)
+        d.draw_boolean()
 
     for i in range(-2 * n, 2 * n + 1):
         try:
@@ -298,13 +319,13 @@ def test_handles_start_indices_like_a_list():
 
 
 def test_last_block_length():
-    d = ConjectureData.for_buffer([0] * 15)
+    d = ConjectureData.for_buffer([0] * 20)
 
     with pytest.raises(IndexError):
         d.blocks.last_block_length
 
     for n in range(1, 5 + 1):
-        d.draw_bits(n * 8)
+        d.draw_integer(0, 2 ** (n * 8) - 1)
         assert d.blocks.last_block_length == n
 
 
@@ -312,10 +333,10 @@ def test_examples_show_up_as_discarded():
     d = ConjectureData.for_buffer([1, 0, 1])
 
     d.start_example(1)
-    d.draw_bits(1)
+    d.draw_boolean()
     d.stop_example(discard=True)
     d.start_example(1)
-    d.draw_bits(1)
+    d.draw_boolean()
     d.stop_example()
     d.freeze()
 
@@ -324,10 +345,18 @@ def test_examples_show_up_as_discarded():
 
 def test_examples_support_negative_indexing():
     d = ConjectureData.for_buffer(bytes(2))
-    d.draw_bits(1)
-    d.draw_bits(1)
+    d.draw(st.booleans())
+    d.draw(st.booleans())
     d.freeze()
     assert d.examples[-1].length == 1
+
+
+def test_examples_out_of_bounds_index():
+    d = ConjectureData.for_buffer(bytes(2))
+    d.draw(st.booleans())
+    d.freeze()
+    with pytest.raises(IndexError):
+        d.examples[10]
 
 
 def test_can_override_label():
@@ -340,7 +369,7 @@ def test_can_override_label():
 def test_will_mark_too_deep_examples_as_invalid():
     d = ConjectureData.for_buffer(bytes(0))
 
-    s = st.none()
+    s = st.integers()
     for _ in range(MAX_DEPTH + 1):
         s = s.map(lambda x: None)
 
@@ -379,15 +408,15 @@ def test_can_note_str_as_non_repr():
 def test_result_is_overrun():
     d = ConjectureData.for_buffer(bytes(0))
     with pytest.raises(StopTest):
-        d.draw_bits(1)
+        d.draw_boolean()
     assert d.as_result() is Overrun
 
 
 def test_trivial_before_force_agrees_with_trivial_after():
     d = ConjectureData.for_buffer([0, 1, 1])
-    d.draw_bits(1)
-    d.draw_bits(1, forced=1)
-    d.draw_bits(1)
+    d.draw_boolean()
+    d.draw_boolean(forced=True)
+    d.draw_boolean()
 
     t1 = [d.blocks.trivial(i) for i in range(3)]
     d.freeze()
@@ -401,15 +430,15 @@ def test_trivial_before_force_agrees_with_trivial_after():
 
 def test_events_are_noted():
     d = ConjectureData.for_buffer(())
-    d.note_event("hello")
+    d.events["hello"] = ""
     assert "hello" in d.events
 
 
 def test_blocks_end_points():
     d = ConjectureData.for_buffer(bytes(4))
-    d.draw_bits(1)
-    d.draw_bits(16, forced=1)
-    d.draw_bits(8)
+    d.draw_boolean()
+    d.draw_integer(0, 2**16 - 1, forced=1)
+    d.draw_integer(0, 2**8 - 1)
     assert (
         list(d.blocks.all_bounds())
         == [b.bounds for b in d.blocks]
@@ -419,28 +448,28 @@ def test_blocks_end_points():
 
 def test_blocks_lengths():
     d = ConjectureData.for_buffer(bytes(7))
-    d.draw_bits(32)
-    d.draw_bits(16)
-    d.draw_bits(1)
-    assert [b.length for b in d.blocks] == [4, 2, 1]
+    d.draw_integer(0, 2**24 - 1)
+    d.draw_integer(0, 2**16 - 1)
+    d.draw_boolean()
+    assert [b.length for b in d.blocks] == [3, 2, 1]
 
 
 def test_child_indices():
     d = ConjectureData.for_buffer(bytes(4))
 
     d.start_example(0)  # examples[1]
-    d.start_example(0)  # examples[2]
-    d.draw_bits(1)  # examples[3]
-    d.draw_bits(1)  # examples[4]
+    d.start_example(1)  # examples[2]
+    d.draw(st.booleans())  # examples[3] (lazystrategy) + examples[4] (st.booleans)
+    d.draw(st.booleans())  # examples[4] (lazystrategy) + examples[5] (st.booleans)
     d.stop_example()
     d.stop_example()
-    d.draw_bits(1)  # examples[5]
-    d.draw_bits(1)  # examples[6]
+    d.draw(st.booleans())  # examples[7] (lazystrategy) + examples[8] (st.booleans)
+    d.draw(st.booleans())  # examples[9] (lazystrategy) + examples[10] (st.booleans)
     d.freeze()
 
-    assert list(d.examples.children[0]) == [1, 5, 6]
+    assert list(d.examples.children[0]) == [1, 7, 9]
     assert list(d.examples.children[1]) == [2]
-    assert list(d.examples.children[2]) == [3, 4]
+    assert list(d.examples.children[2]) == [3, 5]
 
     assert d.examples[0].parent is None
     for ex in list(d.examples)[1:]:
@@ -451,10 +480,10 @@ def test_example_equality():
     d = ConjectureData.for_buffer(bytes(2))
 
     d.start_example(0)
-    d.draw_bits(1)
+    d.draw_boolean()
     d.stop_example()
     d.start_example(0)
-    d.draw_bits(1)
+    d.draw_boolean()
     d.stop_example()
     d.freeze()
 

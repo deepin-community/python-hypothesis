@@ -11,8 +11,10 @@
 import pytest
 
 from hypothesis import HealthCheck, Verbosity, assume, example, given, reject, settings
-from hypothesis.errors import Flaky, Unsatisfiable, UnsatisfiedAssumption
+from hypothesis.core import StateForActualGivenExecution
+from hypothesis.errors import Flaky, FlakyFailure, Unsatisfiable, UnsatisfiedAssumption
 from hypothesis.internal.conjecture.engine import MIN_TEST_CALLS
+from hypothesis.internal.scrutineer import Tracer
 from hypothesis.strategies import booleans, composite, integers, lists, random_module
 
 from tests.common.utils import no_shrink
@@ -31,8 +33,11 @@ def test_fails_only_once_is_flaky():
             first_call[0] = False
             raise Nope
 
-    with pytest.raises(Flaky):
+    with pytest.raises(FlakyFailure, match="Falsified on the first call but") as e:
         rude()
+    exceptions = e.value.exceptions
+    assert len(exceptions) == 1
+    assert isinstance(exceptions[0], Nope)
 
 
 def test_gives_flaky_error_if_assumption_is_flaky():
@@ -45,8 +50,32 @@ def test_gives_flaky_error_if_assumption_is_flaky():
         seen.add(s)
         raise AssertionError
 
-    with pytest.raises(Flaky):
+    with pytest.raises(FlakyFailure, match="Inconsistent results from replaying") as e:
         oops()
+    exceptions = e.value.exceptions
+    assert len(exceptions) == 2
+    assert isinstance(exceptions[0], AssertionError)
+    assert isinstance(exceptions[1], UnsatisfiedAssumption)
+
+
+def test_flaky_with_context_when_fails_only_under_tracing(monkeypatch):
+    # make anything fail under tracing
+    monkeypatch.setattr(Tracer, "can_trace", lambda: True)
+    monkeypatch.setattr(Tracer, "__enter__", lambda *_: 1 / 0)
+    # ensure tracing is always entered inside _execute_once_for_engine
+    monkeypatch.setattr(StateForActualGivenExecution, "_should_trace", lambda _: True)
+
+    @given(integers())
+    def test(x):
+        pass
+
+    with pytest.raises(
+        FlakyFailure, match="failed on the first run but now succeeds"
+    ) as e:
+        test()
+    exceptions = e.value.exceptions
+    assert len(exceptions) == 1
+    assert isinstance(exceptions[0], ZeroDivisionError)
 
 
 def test_does_not_attempt_to_shrink_flaky_errors():
@@ -58,7 +87,7 @@ def test_does_not_attempt_to_shrink_flaky_errors():
         values.append(x)
         assert len(values) != 1
 
-    with pytest.raises(Flaky):
+    with pytest.raises(FlakyFailure):
         test()
     # We try a total of ten calls in the generation phase, each usually a
     # unique value, looking briefly (and unsuccessfully) for another bug.
@@ -118,7 +147,7 @@ def test_failure_sequence_inducing(building, testing, rnd):
 
     try:
         test()
-    except (Nope, Unsatisfiable, Flaky):
+    except (Nope, Flaky, Unsatisfiable):
         pass
     except UnsatisfiedAssumption:
         raise SatisfyMe from None

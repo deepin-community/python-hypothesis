@@ -4,20 +4,21 @@ Subject: Disable hoverxref; not in Debian.
 
 Forwarded: not-needed
 ---
- hypothesis-python/docs/conf.py | 3 ---
- 1 file changed, 3 deletions(-)
+ hypothesis-python/docs/conf.py | 4 ----
+ 1 file changed, 4 deletions(-)
 
 diff --git a/hypothesis-python/docs/conf.py b/hypothesis-python/docs/conf.py
-index c4141e3..dbe282f 100644
+index ba605b4..5a807fd 100644
 --- a/hypothesis-python/docs/conf.py
 +++ b/hypothesis-python/docs/conf.py
-@@ -27,9 +27,6 @@ extensions = [
+@@ -34,10 +34,6 @@ extensions = [
      "sphinx.ext.extlinks",
      "sphinx.ext.viewcode",
      "sphinx.ext.intersphinx",
 -    "hoverxref.extension",
 -    "sphinx_codeautolink",
 -    "sphinx_selective_exclude.eager_only",
+-    "sphinx-jsonschema",
  ]
  
  templates_path = ["_templates"]

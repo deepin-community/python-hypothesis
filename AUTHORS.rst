@@ -21,6 +21,8 @@ their individual contributions.
 * `Alex Willmer <https://github.com/moreati>`_ (alex@moreati.org.uk)
 * `Andrea Pierré <https://www.github.com/kir0ul>`_
 * `Andrea Reina <https://www.github.com/andreareina>`_
+* `Andrew Sansom <https://www.github.com/qthequartermasterman>`_
+* `Anne Archibald <https://www.github.com/td-anne>`_
 * `Ben Anhalt <https://github.com/benanhalt>`_
 * `Ben Peterson <https://github.com/killthrush>`_ (killthrush@hotmail.com)
 * `Benjamin Lee <https://github.com/Benjamin-Lee>`_ (benjamindlee@me.com)
@@ -94,7 +96,9 @@ their individual contributions.
 * `Jonathan Gayvallet <https://github.com/Meallia>`_ (jonathan.gayvallet@orange.com)
 * `Jonty Wareing <https://www.github.com/Jonty>`_ (jonty@jonty.co.uk)
 * `Joshua Boone <https://www.github.com/patchedwork>`_ (joshuaboone4190@gmail.com)
+* `Joshua Munn <https://www.github.com/jams2>`_ (public@elysee-munn.family)
 * `jmhsi <https://www.github.com/jmhsi>`_
+* `Justus Magin <https://github.com/keewis>`_
 * `jwg4 <https://www.github.com/jwg4>`_
 * `Kai Chen <https://www.github.com/kx-chen>`_ (kaichen120@gmail.com)
 * `Karthikeyan Singaravelan <https://www.github.com/tirkarthi>`_ (tir.karthi@gmail.com)
@@ -128,6 +132,7 @@ their individual contributions.
 * `Michel Alexandre Salim <https://github.com/michel-slm>`_ (michel@michel-slm.name)
 * `mulkieran <https://www.github.com/mulkieran>`_
 * `Munir Abdinur <https://www.github.com/mabdinur>`_
+* `Nathan Goldbaum <https://www/github.com/ngoldbaum>`_
 * `Nicholas Chammas <https://www.github.com/nchammas>`_
 * `Nick Anyos <https://www.github.com/NickAnyos>`_
 * `Nick Collins <https://github.com/nickcollins>` _
@@ -181,6 +186,7 @@ their individual contributions.
 * `Tyler Gibbons <https://www.github.com/kavec>`_ (tyler.gibbons@flexport.com)
 * `Tyler Nickerson <https://www.github.com/nmbrgts>`_
 * `Vidya Rani <https://www.github.com/vidyarani-dg>`_ (vidyarani.d.g@gmail.com)
+* `Vince Reuter <https://github.com/vreuter>`_ (vince.reuter@gmail.com)
 * `Vincent Michel <https://www.github.com/vxgmichel>`_ (vxgmichel@gmail.com)
 * `Viorel Pluta <https://github.com/viopl>`_ (viopluta@gmail.com)
 * `Vytautas Strimaitis <https://www.github.com/vstrimaitis>`_

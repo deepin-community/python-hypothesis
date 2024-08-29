@@ -1,3 +1,205 @@
+python-hypothesis (6.111.2-1) unstable; urgency=medium
+
+  * New upstream version 6.111.2
+  * Skip test which expects installed /usr/bin/hypothesis
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 26 Aug 2024 22:27:30 +0200
+
+python-hypothesis (6.105.1-1) unstable; urgency=medium
+
+  * New upstream version 6.105.1
+
+ -- Timo Röhling <roehling@debian.org>  Tue, 09 Jul 2024 15:08:30 +0200
+
+python-hypothesis (6.104.2-1) unstable; urgency=medium
+
+  * New upstream version 6.104.2
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 01 Jul 2024 15:57:40 +0200
+
+python-hypothesis (6.103.2-1) unstable; urgency=medium
+
+  * New upstream version 6.103.2
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 17 Jun 2024 16:28:10 +0200
+
+python-hypothesis (6.103.1-1) unstable; urgency=medium
+
+  * New upstream version 6.103.1
+
+ -- Timo Röhling <roehling@debian.org>  Sat, 08 Jun 2024 23:42:47 +0200
+
+python-hypothesis (6.103.0-1) unstable; urgency=medium
+
+  * New upstream version 6.103.0
+  * Reenable ghostwriter tests (fixed by upstream)
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 03 Jun 2024 16:59:49 +0200
+
+python-hypothesis (6.102.6-1) unstable; urgency=medium
+
+  * New upstream version 6.102.6
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 27 May 2024 11:55:38 +0200
+
+python-hypothesis (6.102.4-1) unstable; urgency=medium
+
+  * New upstream version 6.102.4
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 20 May 2024 10:21:50 +0200
+
+python-hypothesis (6.102.1-1) unstable; urgency=medium
+
+  * New upstream version 6.102.1
+
+ -- Timo Röhling <roehling@debian.org>  Tue, 14 May 2024 19:04:30 +0200
+
+python-hypothesis (6.100.7-1) unstable; urgency=medium
+
+  * New upstream version 6.100.7
+
+ -- Timo Röhling <roehling@debian.org>  Sun, 12 May 2024 22:56:54 +0200
+
+python-hypothesis (6.100.4-1) unstable; urgency=medium
+
+  * New upstream version 6.100.4
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 06 May 2024 17:32:40 +0200
+
+python-hypothesis (6.100.2-1) unstable; urgency=medium
+
+  * New upstream version 6.100.2
+  * Stop enforcing minimum Sphinx version for now
+
+ -- Timo Röhling <roehling@debian.org>  Thu, 02 May 2024 11:11:26 +0200
+
+python-hypothesis (6.100.1-3) unstable; urgency=medium
+
+  * Drop obsolete Build-Depend on python3-exceptiongroup
+
+ -- Timo Röhling <roehling@debian.org>  Wed, 24 Apr 2024 11:12:56 +0200
+
+python-hypothesis (6.100.1-2) unstable; urgency=medium
+
+  * Skip test_adds_note_showing_which_strategy.
+    This test fails with pytest 7 because the note is not matched
+    by pytest.raises(match=...)
+
+ -- Timo Röhling <roehling@debian.org>  Thu, 18 Apr 2024 00:26:23 +0200
+
+python-hypothesis (6.100.1-1) unstable; urgency=medium
+
+  * New upstream version 6.100.1
+  * Bump Standards-Version to 4.7.0
+
+ -- Timo Röhling <roehling@debian.org>  Thu, 11 Apr 2024 15:25:55 +0200
+
+python-hypothesis (6.100.0-1) unstable; urgency=medium
+
+  * New upstream version 6.100.0
+  * Temporarily disable ghostwriter tests due to Python 3.12 regression
+
+ -- Timo Röhling <roehling@debian.org>  Wed, 03 Apr 2024 17:48:18 +0200
+
+python-hypothesis (6.99.9-1) unstable; urgency=medium
+
+  * New upstream version 6.99.9
+  * Update patches
+    - Drop 0004-Fix-32-bit-architecture-detection-in-pandas-index-te.patch
+      (merged by upstream)
+
+ -- Timo Röhling <roehling@debian.org>  Tue, 19 Mar 2024 12:23:45 +0100
+
+python-hypothesis (6.98.15-1) unstable; urgency=medium
+
+  * New upstream version 6.98.15
+  * Fix test failure on 32 bit architectures
+
+ -- Timo Röhling <roehling@debian.org>  Thu, 29 Feb 2024 23:13:22 +0100
+
+python-hypothesis (6.98.12-2) unstable; urgency=medium
+
+  * Require pytest 8 as one test fails with pytest 7
+
+ -- Timo Röhling <roehling@debian.org>  Tue, 27 Feb 2024 13:08:25 +0100
+
+python-hypothesis (6.98.12-1) unstable; urgency=medium
+
+  * New upstream version 6.98.12
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 26 Feb 2024 16:49:57 +0100
+
+python-hypothesis (6.98.9-1) unstable; urgency=medium
+
+  * New upstream version 6.98.9
+  * Update d/copyright
+
+ -- Timo Röhling <roehling@debian.org>  Tue, 20 Feb 2024 21:02:12 +0100
+
+python-hypothesis (6.98.4-1) unstable; urgency=medium
+
+  * New upstream version 6.98.4
+
+ -- Timo Röhling <roehling@debian.org>  Tue, 13 Feb 2024 16:43:41 +0100
+
+python-hypothesis (6.98.2-2) unstable; urgency=medium
+
+  * Do not create egg-info in autopkgtest
+  * Skip some tests which still fail in autopkgtest
+
+ -- Timo Röhling <roehling@debian.org>  Thu, 08 Feb 2024 00:13:45 +0100
+
+python-hypothesis (6.98.2-1) unstable; urgency=medium
+
+  [ Alexandre Detiste ]
+  * remove extraneous dep. on python3-mock
+
+  [ Timo Röhling ]
+  * New upstream version 6.98.2
+  * Refresh patches (no functional changes)
+  * Make sure that Hypothesis plugin is autoloaded for tests
+
+ -- Timo Röhling <roehling@debian.org>  Wed, 07 Feb 2024 10:23:25 +0100
+
+python-hypothesis (6.93.2-1) unstable; urgency=medium
+
+  * New upstream version 6.93.2
+    - Fix flaky test_can_produce_multi_line_strings (Closes: #1059897)
+
+ -- Timo Röhling <roehling@debian.org>  Tue, 16 Jan 2024 14:01:43 +0100
+
+python-hypothesis (6.92.2-1) unstable; urgency=medium
+
+  * Use pybuild {build_dir} for sphinx-build
+  * New upstream version 6.92.2
+
+ -- Timo Röhling <roehling@debian.org>  Sat, 30 Dec 2023 23:33:26 +0100
+
+python-hypothesis (6.92.1-1) unstable; urgency=medium
+
+  * New upstream version 6.92.1
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 18 Dec 2023 22:42:39 +0100
+
+python-hypothesis (6.92.0-1) unstable; urgency=medium
+
+  * New upstream version 6.92.0
+  * Refresh patches
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 11 Dec 2023 16:16:13 +0100
+
+python-hypothesis (6.91.0-1) unstable; urgency=medium
+
+  * New upstream version 6.91.0
+
+ -- Timo Röhling <roehling@debian.org>  Tue, 28 Nov 2023 08:46:18 +0100
+
+python-hypothesis (6.90.0-1) unstable; urgency=medium
+
+  * New upstream version 6.90.0
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 20 Nov 2023 12:56:43 +0100
+
 python-hypothesis (6.88.4-1) unstable; urgency=medium
 
   * New upstream version 6.88.4

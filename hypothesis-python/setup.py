@@ -60,10 +60,11 @@ extras = {
     "pytest": ["pytest>=4.6"],
     "dpcontracts": ["dpcontracts>=0.4"],
     "redis": ["redis>=3.0.0"],
+    "crosshair": ["hypothesis-crosshair>=0.0.13", "crosshair-tool>=0.0.70"],
     # zoneinfo is an odd one: every dependency is conditional, because they're
-    # only necessary on old versions of Python or Windows systems.
+    # only necessary on old versions of Python or Windows systems or emscripten.
     "zoneinfo": [
-        "tzdata>=2023.3 ; sys_platform == 'win32'",
+        "tzdata>=2024.1 ; sys_platform == 'win32' or sys_platform == 'emscripten'",
         "backports.zoneinfo>=0.2.1 ; python_version<'3.9'",
     ],
     # We only support Django versions with upstream support - see
@@ -96,7 +97,7 @@ setuptools.setup(
     zip_safe=False,
     extras_require=extras,
     install_requires=[
-        "attrs>=19.2.0",
+        "attrs>=22.2.0",
         "exceptiongroup>=1.0.0 ; python_version<'3.11'",
         "sortedcontainers>=2.1.0,<3.0.0",
     ],
@@ -117,13 +118,18 @@ setuptools.setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: Implementation :: PyPy",
         "Topic :: Education :: Testing",
         "Topic :: Software Development :: Testing",
         "Typing :: Typed",
     ],
-    py_modules=["_hypothesis_pytestplugin", "_hypothesis_ftz_detector"],
+    py_modules=[
+        "_hypothesis_pytestplugin",
+        "_hypothesis_ftz_detector",
+        "_hypothesis_globals",
+    ],
     entry_points={
         "pytest11": ["hypothesispytest = _hypothesis_pytestplugin"],
         "console_scripts": ["hypothesis = hypothesis.extra.cli:main"],

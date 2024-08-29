@@ -8,12 +8,15 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+from dataclasses import dataclass
+
 import pytest
 
 from hypothesis import Verbosity, assume, given, reject, reporting, settings
 from hypothesis.control import (
     BuildContext,
     _current_build_context,
+    _event_to_string,
     cleanup,
     current_build_context,
     currently_in_test_context,
@@ -26,7 +29,7 @@ from hypothesis.errors import (
     UnsatisfiedAssumption,
 )
 from hypothesis.internal.compat import ExceptionGroup
-from hypothesis.internal.conjecture.data import ConjectureData as TD
+from hypothesis.internal.conjecture.data import ConjectureData
 from hypothesis.stateful import RuleBasedStateMachine, rule
 from hypothesis.strategies import integers
 
@@ -34,7 +37,7 @@ from tests.common.utils import capture_out
 
 
 def bc():
-    return BuildContext(TD.for_buffer(b""))
+    return BuildContext(ConjectureData.for_buffer(b""))
 
 
 def test_cannot_cleanup_with_no_context():
@@ -175,6 +178,26 @@ def test_prints_all_notes_in_verbose_mode():
         assert x in v
 
 
+@dataclass
+class CanBePrettyPrinted:
+    n: int
+
+
+def test_note_pretty_prints():
+    reports = []
+
+    @given(integers(1, 10))
+    def test(n):
+        with reporting.with_reporter(reports.append):
+            note(CanBePrettyPrinted(n))
+        assert n != 5
+
+    with pytest.raises(AssertionError):
+        test()
+
+    assert reports == ["CanBePrettyPrinted(n=5)"]
+
+
 def test_not_currently_in_hypothesis():
     assert currently_in_test_context() is False
 
@@ -191,3 +214,7 @@ class ContextMachine(RuleBasedStateMachine):
 
 
 test_currently_in_stateful_test = ContextMachine.TestCase
+
+
+def test_can_convert_non_weakref_types_to_event_strings():
+    _event_to_string(())
