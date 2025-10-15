@@ -8,6 +8,7 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import datetime as dt
 import decimal
 import math
 import operator
@@ -20,6 +21,7 @@ import pytest
 
 from hypothesis import HealthCheck, given, settings, strategies as st
 from hypothesis.errors import HypothesisWarning, Unsatisfiable
+from hypothesis.internal.conjecture.providers import COLLECTION_DEFAULT_MAX_SIZE
 from hypothesis.internal.filtering import max_len, min_len
 from hypothesis.internal.floats import next_down, next_up
 from hypothesis.internal.reflection import get_pretty_function_description
@@ -27,7 +29,7 @@ from hypothesis.strategies._internal.core import data
 from hypothesis.strategies._internal.lazy import LazyStrategy, unwrap_strategies
 from hypothesis.strategies._internal.numbers import FloatStrategy, IntegersStrategy
 from hypothesis.strategies._internal.strategies import FilteredStrategy, MappedStrategy
-from hypothesis.strategies._internal.strings import TextStrategy
+from hypothesis.strategies._internal.strings import BytesStrategy, TextStrategy
 
 from tests.common.debug import check_can_generate_examples
 from tests.common.utils import fails_with
@@ -373,9 +375,10 @@ def test_isidentifier_filter_properly_rewritten(al, data):
     assert example.isidentifier()
 
 
-@pytest.mark.parametrize("al", ["¥¦§©"])
-def test_isidentifer_filter_unsatisfiable(al):
-    fs = st.text(alphabet=al).filter(str.isidentifier)
+def test_isidentifer_filter_unsatisfiable():
+    alphabet = "¥¦§©"
+    assert not any(f"_{c}".isidentifier() for c in alphabet)
+    fs = st.text(alphabet=alphabet).filter(str.isidentifier)
     with pytest.raises(Unsatisfiable):
         check_can_generate_examples(fs)
 
@@ -505,6 +508,10 @@ def test_filter_rewriting_text_lambda_len(data, strategy, predicate, start, end)
     if isinstance(unwrapped.filtered_strategy, MappedStrategy):
         unwrapped = unwrapped.filtered_strategy.mapped_strategy
 
+    # binary() has a finite-but-effectively-infinite cap instead.
+    if isinstance(unwrapped_nofilter, BytesStrategy) and end == math.inf:
+        end = COLLECTION_DEFAULT_MAX_SIZE
+
     assert unwrapped.filtered_strategy.min_size == start
     assert unwrapped.filtered_strategy.max_size == end
     value = data.draw(s)
@@ -619,3 +626,20 @@ def test_regex_filter_rewriting(data, strategy, pattern, method):
 @given(st.text().filter(re.compile("abc").sub))
 def test_error_on_method_which_requires_multiple_args(_):
     pass
+
+
+def test_dates_filter_rewriting():
+    today = dt.date.today()
+
+    assert st.dates().filter(partial(operator.lt, dt.date.max)).is_empty
+    assert st.dates().filter(partial(operator.gt, dt.date.min)).is_empty
+    assert st.dates(min_value=today).filter(partial(operator.gt, today)).is_empty
+    assert st.dates(max_value=today).filter(partial(operator.lt, today)).is_empty
+
+    bare = unwrap_strategies(st.dates())
+    assert bare.filter(partial(operator.ge, dt.date.max)) is bare
+    assert bare.filter(partial(operator.le, dt.date.min)) is bare
+
+    new = bare.filter(partial(operator.le, today))
+    assert not new.is_empty
+    assert new is not bare

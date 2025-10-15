@@ -11,8 +11,10 @@
 import abc
 import enum
 import sys
+import typing
+from collections.abc import Sequence
 from inspect import Parameter as P, Signature
-from typing import Callable, Dict, Generic, List, Sequence, TypeVar, Union
+from typing import Callable, Generic, List as _List, TypeVar, Union
 
 import pytest
 
@@ -23,7 +25,7 @@ from hypothesis.internal.reflection import get_pretty_function_description
 from hypothesis.strategies._internal import types
 from hypothesis.strategies._internal.lazy import LazyStrategy
 from hypothesis.strategies._internal.types import _global_type_lookup
-from hypothesis.strategies._internal.utils import _strategies
+from hypothesis.strategies._internal.utils import _all_strategies
 
 from tests.common.debug import (
     assert_all_examples,
@@ -31,7 +33,16 @@ from tests.common.debug import (
     check_can_generate_examples,
     find_any,
 )
-from tests.common.utils import fails_with, temp_registered
+from tests.common.utils import (
+    Why,
+    fails_with,
+    skipif_threading,
+    temp_registered,
+    xfail_on_crosshair,
+)
+
+# we'll continue testing the typing variants until their removal from the stdlib
+# ruff: noqa: UP006, UP035
 
 types_with_core_strat = {
     type_
@@ -40,7 +51,6 @@ types_with_core_strat = {
 }
 
 
-@pytest.mark.skipif(sys.version_info[:2] >= (3, 14), reason="FIXME-py314")
 def test_generic_sequence_of_integers_may_be_lists_or_bytes():
     strat = st.from_type(Sequence[int])
     find_any(strat, lambda x: isinstance(x, bytes))
@@ -79,11 +89,13 @@ def test_lookup_knows_about_all_core_strategies():
         "timezone_keys",
         "timezones",
     }
-    assert set(_strategies).issuperset(blocklist), blocklist.difference(_strategies)
+    assert set(_all_strategies).issuperset(blocklist), blocklist.difference(
+        _all_strategies
+    )
     found = set()
     for thing in (
         getattr(st, name)
-        for name in sorted(_strategies)
+        for name in sorted(_all_strategies)
         if name in dir(st) and name not in blocklist
     ):
         for n in range(3):
@@ -159,6 +171,9 @@ def test_custom_type_resolution_with_function():
 
 def test_custom_type_resolution_with_function_non_strategy():
     with temp_registered(UnknownType, lambda _: None):
+        # NOTE: For compatibility with Python 3.9's LL(1)
+        # parser, this is written as a nested with-statement,
+        # instead of a compound one.
         with pytest.raises(ResolutionFailed):
             check_can_generate_examples(st.from_type(UnknownType))
         with pytest.raises(ResolutionFailed):
@@ -193,6 +208,7 @@ def test_errors_if_generic_resolves_empty():
             check_can_generate_examples(fails_2)
 
 
+@skipif_threading
 def test_cannot_register_empty():
     # Cannot register and did not register
     with pytest.raises(InvalidArgument):
@@ -254,8 +270,19 @@ def _check_instances(t):
     )
 
 
+def maybe_mark(x):
+    if x.__name__ in "Match Decimal IPv4Address":
+        marks = xfail_on_crosshair(Why.other, as_marks=True, strict=False)
+        return pytest.param(x, marks=marks)
+    return x
+
+
 @pytest.mark.parametrize(
-    "typ", sorted((x for x in _global_type_lookup if _check_instances(x)), key=str)
+    "typ",
+    sorted(
+        (maybe_mark(x) for x in _global_type_lookup if _check_instances(x)),
+        key=str,
+    ),
 )
 @given(data=st.data())
 def test_can_generate_from_all_registered_types(data, typ):
@@ -279,7 +306,7 @@ class Lines(Sequence[str]):
     """
 
 
-class SpecificDict(Dict[int, int]):
+class SpecificDict(dict[int, int]):
     pass
 
 
@@ -308,10 +335,10 @@ def test_issue_2951_regression():
 
 def test_issue_2951_regression_two_params():
     map_strat = st.builds(SpecificDict, st.dictionaries(st.integers(), st.integers()))
-    expected = repr(st.from_type(Dict[int, int]))
+    expected = repr(st.from_type(dict[int, int]))
     with temp_registered(SpecificDict, map_strat):
         assert st.from_type(SpecificDict) == map_strat
-        assert expected == repr(st.from_type(Dict[int, int]))
+        assert expected == repr(st.from_type(dict[int, int]))
 
 
 @pytest.mark.parametrize(
@@ -332,15 +359,20 @@ def test_generic_origin_with_type_args(generic, strategy):
     assert generic not in types._global_type_lookup
 
 
+skip_39 = pytest.mark.skipif(sys.version_info[:2] == (3, 9), reason="early version")
+
+
 @pytest.mark.parametrize(
     "generic",
     (
         Callable,
-        List,
+        list,
         Sequence,
         # you can register types with all generic parameters
-        List[T],
-        Sequence[T],
+        _List[T],
+        getattr(typing, "Sequence", None)[T],  # pyupgrade workaround
+        pytest.param(list[T], marks=skip_39),
+        pytest.param(Sequence[T], marks=skip_39),
         # User-defined generics should also work
         MyGeneric,
         MyGeneric[T],

@@ -12,7 +12,7 @@ from inspect import signature
 
 import pytest
 
-from hypothesis import Verbosity, assume, given, settings
+from hypothesis import Verbosity, assume, find, given, settings, strategies as st
 from hypothesis.errors import InvalidArgument, InvalidState
 from hypothesis.reporting import with_reporter
 from hypothesis.strategies import booleans, functions, integers
@@ -98,16 +98,17 @@ def test_functions_strategy_return_type_inference(f):
 
 
 def test_functions_valid_within_given_invalid_outside():
-    cache = [None]
+    cache = None
 
     @given(functions())
     def t(f):
+        nonlocal cache
+        cache = f
         assert f() is None
-        cache[0] = f
 
     t()
     with pytest.raises(InvalidState):
-        cache[0]()
+        cache()
 
 
 def test_can_call_default_like_arg():
@@ -203,3 +204,12 @@ def test_functions_note_only_first_to_pure_functions(f):
         f()
         f()
     assert len(ls) == 1
+
+
+def test_functions_supports_find():
+    f = find(
+        st.functions(like=pure_func, returns=st.integers(), pure=True), lambda x: True
+    )
+    with pytest.raises(InvalidState):
+        f(1, 2)
+    assert f.__name__ == pure_func.__name__

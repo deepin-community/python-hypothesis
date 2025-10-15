@@ -1,0 +1,23 @@
+From: Tristan Seligmann <mithrandi@debian.org>
+Date: Mon, 3 Aug 2020 15:12:37 +0200
+Subject: Disable Sphinx extensions which are not in Debian.
+
+Forwarded: not-needed
+---
+ hypothesis-python/docs/conf.py | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/hypothesis-python/docs/conf.py b/hypothesis-python/docs/conf.py
+index 4a1179e..40d93b1 100644
+--- a/hypothesis-python/docs/conf.py
++++ b/hypothesis-python/docs/conf.py
+@@ -37,9 +37,6 @@ extensions = [
+     "sphinx.ext.viewcode",
+     "sphinx.ext.intersphinx",
+     "sphinx.ext.napoleon",
+-    "sphinx_codeautolink",
+-    "sphinx_selective_exclude.eager_only",
+-    "sphinx-jsonschema",
+     # loading this extension overrides the default -b linkcheck behavior with
+     # custom url ignore logic. see hypothesis_linkcheck.py for details.
+     "hypothesis_linkcheck",

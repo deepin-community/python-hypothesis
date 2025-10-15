@@ -13,11 +13,11 @@ import string
 from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
-from typing import Any, Callable, Dict, Type, TypeVar, Union
+from typing import Any, Callable, TypeVar, Union
 
 import django
 from django import forms as df
-from django.contrib.auth.forms import UsernameField
+from django.conf import settings
 from django.core.validators import (
     validate_ipv4_address,
     validate_ipv6_address,
@@ -68,8 +68,8 @@ def timezones():
 
 
 # Mapping of field types, to strategy objects or functions of (type) -> strategy
-_FieldLookUpType = Dict[
-    Type[AnyField],
+_FieldLookUpType = dict[
+    type[AnyField],
     Union[st.SearchStrategy, Callable[[Any], st.SearchStrategy]],
 ]
 _global_field_lookup: _FieldLookUpType = {
@@ -231,7 +231,6 @@ def _for_binary(field):
 @register_for(dm.TextField)
 @register_for(df.CharField)
 @register_for(df.RegexField)
-@register_for(UsernameField)
 def _for_text(field):
     # We can infer a vastly more precise strategy by considering the
     # validators as well as the field type.  This is a minimal proof of
@@ -260,6 +259,12 @@ def _for_text(field):
     if getattr(field, "blank", False) or not getattr(field, "required", True):
         return st.just("") | strategy
     return strategy
+
+
+if "django.contrib.auth" in settings.INSTALLED_APPS:
+    from django.contrib.auth.forms import UsernameField
+
+    register_for(UsernameField)(_for_text)
 
 
 @register_for(df.BooleanField)
@@ -319,7 +324,7 @@ def _for_model_multiple_choice(field):
 
 
 def register_field_strategy(
-    field_type: Type[AnyField], strategy: st.SearchStrategy
+    field_type: type[AnyField], strategy: st.SearchStrategy
 ) -> None:
     """Add an entry to the global field-to-strategy lookup used by
     :func:`~hypothesis.extra.django.from_field`.

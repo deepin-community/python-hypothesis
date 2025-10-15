@@ -11,20 +11,8 @@
 import importlib
 import math
 import types
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Literal,
-    Mapping,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-    overload,
-)
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union, cast, overload
 
 import numpy as np
 
@@ -80,29 +68,29 @@ _SupportsArray = _try_import("numpy._typing._array_like", "_SupportsArray")
 
 __all__ = [
     "BroadcastableShapes",
-    "from_dtype",
-    "arrays",
+    "array_dtypes",
     "array_shapes",
-    "scalar_dtypes",
+    "arrays",
+    "basic_indices",
     "boolean_dtypes",
-    "unsigned_integer_dtypes",
-    "integer_dtypes",
-    "floating_dtypes",
+    "broadcastable_shapes",
+    "byte_string_dtypes",
     "complex_number_dtypes",
     "datetime64_dtypes",
-    "timedelta64_dtypes",
-    "byte_string_dtypes",
-    "unicode_string_dtypes",
-    "array_dtypes",
-    "nested_dtypes",
-    "valid_tuple_axes",
-    "broadcastable_shapes",
-    "mutually_broadcastable_shapes",
-    "basic_indices",
+    "floating_dtypes",
+    "from_dtype",
     "integer_array_indices",
+    "integer_dtypes",
+    "mutually_broadcastable_shapes",
+    "nested_dtypes",
+    "scalar_dtypes",
+    "timedelta64_dtypes",
+    "unicode_string_dtypes",
+    "unsigned_integer_dtypes",
+    "valid_tuple_axes",
 ]
 
-TIME_RESOLUTIONS = tuple("Y  M  D  h  m  s  ms  us  ns  ps  fs  as".split())
+TIME_RESOLUTIONS = ("Y", "M", "D", "h", "m", "s", "ms", "us", "ns", "ps", "fs", "as")
 
 # See https://github.com/HypothesisWorks/hypothesis/pull/3394 and linked discussion.
 NP_FIXED_UNICODE = tuple(int(x) for x in np.__version__.split(".")[:2]) >= (1, 19)
@@ -232,6 +220,7 @@ def from_dtype(
 
 class ArrayStrategy(st.SearchStrategy):
     def __init__(self, element_strategy, shape, dtype, fill, unique):
+        super().__init__()
         self.shape = tuple(shape)
         self.fill = fill
         self.array_size = int(np.prod(shape))
@@ -260,8 +249,8 @@ class ArrayStrategy(st.SearchStrategy):
             # This branch only exists to help debug weird behaviour in Numpy,
             # such as the string problems we had a while back.
             raise HypothesisException(
-                "Internal error when checking element=%r of %r to array of %r"
-                % (val, val.dtype, result.dtype)
+                f"Internal error when checking element={val!r} of {val.dtype!r} "
+                f"to array of {result.dtype!r}"
             ) from err
         if elem_changed:
             strategy = self.fill if fill else self.element_strategy
@@ -284,11 +273,11 @@ class ArrayStrategy(st.SearchStrategy):
                         "allow_subnormal=False."
                     )
             raise InvalidArgument(
-                "Generated array element %r from %r cannot be represented as "
-                "dtype %r - instead it becomes %r (type %r).  Consider using a more "
-                "precise strategy, for example passing the `width` argument to "
-                "`floats()`."
-                % (val, strategy, self.dtype, result[idx], type(result[idx]))
+                f"Generated array element {val!r} from {strategy!r} cannot be "
+                f"represented as dtype {self.dtype!r} - instead it becomes "
+                f"{result[idx]!r} (type {type(result[idx])!r}).  Consider using "
+                "a more precise strategy, for example passing the `width` argument "
+                "to `floats()`."
             )
 
     def do_draw(self, data):
@@ -360,8 +349,8 @@ class ArrayStrategy(st.SearchStrategy):
                     if result[i] in seen:
                         elements.reject()
                         continue
-                    else:
-                        seen.add(result[i])
+                    seen.add(result[i])
+
                 needs_fill[i] = False
             if needs_fill.any():
                 # We didn't fill all of the indices in the early loop, so we
@@ -400,10 +389,10 @@ class ArrayStrategy(st.SearchStrategy):
             mismatch = out != result
             if mismatch.any():
                 raise InvalidArgument(
-                    "Array elements %r cannot be represented as dtype %r - instead "
-                    "they become %r.  Use a more precise strategy, e.g. without "
+                    f"Array elements {result[mismatch]!r} cannot be represented "
+                    f"as dtype {self.dtype!r} - instead they become "
+                    f"{out[mismatch]!r}.  Use a more precise strategy, e.g. without "
                     "trailing null bytes, as this will be an error future versions."
-                    % (result[mismatch], self.dtype, out[mismatch])
                 )
             result = out
 
@@ -543,7 +532,7 @@ def arrays(
             lambda s: arrays(dtype, s, elements=elements, fill=fill, unique=unique)
         )
     # From here on, we're only dealing with values and it's relatively simple.
-    dtype = np.dtype(dtype)  # type: ignore[arg-type,assignment]
+    dtype = np.dtype(dtype)  # type: ignore[arg-type]
     assert isinstance(dtype, np.dtype)  # help mypy out a bit...
     if elements is None or isinstance(elements, Mapping):
         if dtype.kind in ("m", "M") and "[" not in dtype.str:
@@ -602,6 +591,7 @@ def defines_dtype_strategy(strat: T) -> T:
 
 @defines_dtype_strategy
 def boolean_dtypes() -> st.SearchStrategy["np.dtype[np.bool_]"]:
+    """Return a strategy for boolean dtypes."""
     return st.just("?")  # type: ignore[arg-type]
 
 
@@ -1190,7 +1180,7 @@ def integer_array_indices(
     shape: Shape,
     *,
     result_shape: st.SearchStrategy[Shape] = array_shapes(),
-) -> "st.SearchStrategy[Tuple[NDArray[np.signedinteger[Any]], ...]]": ...
+) -> "st.SearchStrategy[tuple[NDArray[np.signedinteger[Any]], ...]]": ...
 
 
 @overload
@@ -1200,7 +1190,7 @@ def integer_array_indices(
     *,
     result_shape: st.SearchStrategy[Shape] = array_shapes(),
     dtype: "np.dtype[I]",
-) -> "st.SearchStrategy[Tuple[NDArray[I], ...]]": ...
+) -> "st.SearchStrategy[tuple[NDArray[I], ...]]": ...
 
 
 @defines_strategy()
@@ -1208,8 +1198,10 @@ def integer_array_indices(
     shape: Shape,
     *,
     result_shape: st.SearchStrategy[Shape] = array_shapes(),
-    dtype: "np.dtype[I] | np.dtype[np.signedinteger[Any]]" = np.dtype(int),
-) -> "st.SearchStrategy[Tuple[NDArray[I], ...]]":
+    dtype: "np.dtype[I] | np.dtype[np.signedinteger[Any] | np.bool[bool]]" = np.dtype(
+        int
+    ),
+) -> "st.SearchStrategy[tuple[NDArray[I], ...]]":
     """Return a search strategy for tuples of integer-arrays that, when used
     to index into an array of shape ``shape``, given an array whose shape
     was drawn from ``result_shape``.
@@ -1305,7 +1297,6 @@ def _dtype_from_args(args):
     else:
         # Two args: ndarray[shape, type], NDArray[*]
         assert len(args) == 2
-        assert args[0] is Any
         dtype = _unpack_dtype(args[1])
 
     if dtype is Any:
@@ -1315,7 +1306,7 @@ def _dtype_from_args(args):
     return np.dtype(dtype)
 
 
-def _from_type(thing: Type[Ex]) -> Optional[st.SearchStrategy[Ex]]:
+def _from_type(thing: type[Ex]) -> Optional[st.SearchStrategy[Ex]]:
     """Called by st.from_type to try to infer a strategy for thing using numpy.
 
     If we can infer a numpy-specific strategy for thing, we return that; otherwise,

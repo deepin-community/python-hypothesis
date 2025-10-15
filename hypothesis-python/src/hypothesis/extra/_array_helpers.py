@@ -9,10 +9,11 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import re
-from typing import NamedTuple, Optional, Tuple, Union
+from typing import NamedTuple, Optional, Union
 
 from hypothesis import assume, strategies as st
 from hypothesis.errors import InvalidArgument
+from hypothesis.internal.compat import EllipsisType
 from hypothesis.internal.conjecture.utils import _calc_p_continue
 from hypothesis.internal.coverage import check_function
 from hypothesis.internal.validation import check_type, check_valid_interval
@@ -21,28 +22,27 @@ from hypothesis.utils.conventions import UniqueIdentifier, not_set
 
 __all__ = [
     "NDIM_MAX",
-    "Shape",
-    "BroadcastableShapes",
     "BasicIndex",
-    "check_argument",
-    "order_check",
-    "check_valid_dims",
-    "array_shapes",
-    "valid_tuple_axes",
-    "broadcastable_shapes",
-    "mutually_broadcastable_shapes",
-    "MutuallyBroadcastableShapesStrategy",
     "BasicIndexStrategy",
+    "BroadcastableShapes",
+    "MutuallyBroadcastableShapesStrategy",
+    "Shape",
+    "array_shapes",
+    "broadcastable_shapes",
+    "check_argument",
+    "check_valid_dims",
+    "mutually_broadcastable_shapes",
+    "order_check",
+    "valid_tuple_axes",
 ]
 
 
-Shape = Tuple[int, ...]
-# We silence flake8 here because it disagrees with mypy about `ellipsis` (`type(...)`)
-BasicIndex = Tuple[Union[int, slice, None, "ellipsis"], ...]  # noqa: F821
+Shape = tuple[int, ...]
+BasicIndex = tuple[Union[int, slice, None, EllipsisType], ...]
 
 
 class BroadcastableShapes(NamedTuple):
-    input_shapes: Tuple[Shape, ...]
+    input_shapes: tuple[Shape, ...]
     result_shape: Shape
 
 
@@ -121,7 +121,7 @@ def valid_tuple_axes(
     *,
     min_size: int = 0,
     max_size: Optional[int] = None,
-) -> st.SearchStrategy[Tuple[int, ...]]:
+) -> st.SearchStrategy[tuple[int, ...]]:
     """All tuples will have a length >= ``min_size`` and <= ``max_size``. The default
     value for ``max_size`` is ``ndim``.
 
@@ -241,7 +241,7 @@ def broadcastable_shapes(
             if s < min_side and s != 1:
                 max_dims = n
                 break
-            elif not (min_side <= 1 <= max_side or s <= max_side):
+            if not (min_side <= 1 <= max_side or s <= max_side):
                 max_dims = n
                 break
 
@@ -282,7 +282,7 @@ _SIGNATURE_MULTIPLE_OUTPUT = rf"^{_ARGUMENT_LIST}->{_ARGUMENT_LIST}$"
 
 
 class _GUfuncSig(NamedTuple):
-    input_shapes: Tuple[Shape, ...]
+    input_shapes: tuple[Shape, ...]
     result_shape: Shape
 
 
@@ -328,15 +328,15 @@ def _hypothesis_parse_gufunc_signature(signature):
                     raise InvalidArgument(
                         f"Got dimension {name!r}, but handling of frozen optional dimensions "
                         "is ambiguous.  If you known how this should work, please "
-                        "contact us to get this fixed and documented ({signature=})."
+                        f"contact us to get this fixed and documented ({signature=})."
                     )
             except ValueError:
                 names_in = {n.strip("?") for shp in input_shapes for n in shp}
                 names_out = {n.strip("?") for n in result_shape}
                 if name.strip("?") in (names_out - names_in):
                     raise InvalidArgument(
-                        "The {name!r} dimension only appears in the output shape, and is "
-                        "not frozen, so the size is not determined ({signature=})."
+                        f"The {name!r} dimension only appears in the output shape, and is "
+                        f"not frozen, so the size is not determined ({signature=})."
                     ) from None
     return _GUfuncSig(input_shapes=input_shapes, result_shape=result_shape)
 
@@ -466,7 +466,7 @@ def mutually_broadcastable_shapes(
             if s < min_side and s != 1:
                 max_dims = n
                 break
-            elif not (min_side <= 1 <= max_side or s <= max_side):
+            if not (min_side <= 1 <= max_side or s <= max_side):
                 max_dims = n
                 break
 
@@ -632,6 +632,7 @@ class BasicIndexStrategy(st.SearchStrategy):
         allow_newaxis,
         allow_fewer_indices_than_dims,
     ):
+        super().__init__()
         self.shape = shape
         self.min_dims = min_dims
         self.max_dims = max_dims

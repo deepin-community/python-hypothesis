@@ -7,12 +7,12 @@ Subject: Do not enforce minimum Sphinx version
  1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/hypothesis-python/docs/conf.py b/hypothesis-python/docs/conf.py
-index dc938dc..8695d7d 100644
+index da8a77a..0ffc1a9 100644
 --- a/hypothesis-python/docs/conf.py
 +++ b/hypothesis-python/docs/conf.py
-@@ -19,9 +19,9 @@ import sphinx_rtd_theme
- root = Path(__file__).parent.parent
+@@ -21,9 +21,9 @@ root = Path(__file__).parent.parent
  sys.path.append(str(root / "src"))
+ sys.path.append(str(Path(__file__).parent / "_ext"))
  
 -needs_sphinx = re.search(
 -    r"sphinx==([0-9\.]+)", root.joinpath("../requirements/tools.txt").read_text()

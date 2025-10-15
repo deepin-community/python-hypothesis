@@ -1,0 +1,17 @@
+From: =?utf-8?q?Timo_R=C3=B6hling?= <roehling@debian.org>
+Date: Wed, 13 Aug 2025 15:17:00 +0200
+Subject: Do not fail on Redis deprecation warning
+
+---
+ pytest.ini | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/pytest.ini b/pytest.ini
+index c827a5f..e91433a 100644
+--- a/pytest.ini
++++ b/pytest.ini
+@@ -25,3 +25,4 @@ filterwarnings =
+     # pytest-cov can't see into subprocesses; we'll see <100% covered if this is an issue
+     ignore:Module hypothesis.* was previously imported, but not measured
+     ignore:CrosshairPrimitiveProvider.realize does not have the for_failure parameter
++    default:Call to '__init__' function with deprecated usage of input argument/s 'retry_on_timeout'

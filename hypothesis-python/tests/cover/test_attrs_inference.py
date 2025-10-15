@@ -8,7 +8,6 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import sys
 import typing
 
 import attr
@@ -50,9 +49,9 @@ class Inferrables:
         validator=[attr.validators.in_("abcd"), attr.validators.in_(["ab", "cd"])]
     )
 
-    typing_list = attr.ib(type=typing.List[int])
-    typing_list_of_list = attr.ib(type=typing.List[typing.List[int]])
-    typing_dict = attr.ib(type=typing.Dict[str, int])
+    typing_list = attr.ib(type=list[int])
+    typing_list_of_list = attr.ib(type=list[list[int]])
+    typing_dict = attr.ib(type=dict[str, int])
     typing_optional = attr.ib(type=typing.Optional[bool])
     typing_union = attr.ib(type=typing.Union[str, int])
 
@@ -101,21 +100,16 @@ class HasPrivateAttribute:
     _x: int = attr.ib()
 
 
-skip_on_314 = pytest.mark.skipif(sys.version_info[:2] >= (3, 14), reason="FIXME-py314")
-
-
-@pytest.mark.parametrize("s", [st.just(42), pytest.param(..., marks=skip_on_314)])
+@pytest.mark.parametrize("s", [st.just(42)])
 def test_private_attribute(s):
     check_can_generate_examples(st.builds(HasPrivateAttribute, x=s))
 
 
-@skip_on_314
 def test_private_attribute_underscore_fails():
     with pytest.raises(TypeError, match="unexpected keyword argument '_x'"):
         check_can_generate_examples(st.builds(HasPrivateAttribute, _x=st.just(42)))
 
 
-@skip_on_314
 def test_private_attribute_underscore_infer_fails():
     # this has a slightly different failure case, because it goes through
     # attrs-specific resolution logic.
@@ -130,6 +124,6 @@ class HasAliasedAttribute:
     x: int = attr.ib(alias="crazyname")
 
 
-@pytest.mark.parametrize("s", [st.just(42), pytest.param(..., marks=skip_on_314)])
+@pytest.mark.parametrize("s", [st.just(42)])
 def test_aliased_attribute(s):
     check_can_generate_examples(st.builds(HasAliasedAttribute, crazyname=s))

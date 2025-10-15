@@ -9,6 +9,7 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import gc
+import re
 import time
 
 import pytest
@@ -17,6 +18,11 @@ from hypothesis import given, settings, strategies as st
 from hypothesis.errors import DeadlineExceeded, FlakyFailure, InvalidArgument
 
 from tests.common.utils import assert_falsifying_output, fails_with
+
+pytestmark = pytest.mark.skipif(
+    settings.get_current_profile_name() == "threading",
+    reason="takes a long time because we don't monkeypatch time",
+)
 
 
 def test_raises_deadline_on_slow_test():
@@ -30,7 +36,7 @@ def test_raises_deadline_on_slow_test():
 
 
 @pytest.mark.skipif(
-    settings.get_profile(settings._current_profile).deadline is None,
+    settings().deadline is None,
     reason="not expected to fail if deadline is disabled",
 )
 @fails_with(DeadlineExceeded)
@@ -51,13 +57,14 @@ def test_slow_with_none_deadline(i):
 
 
 def test_raises_flaky_if_a_test_becomes_fast_on_rerun():
-    once = [True]
+    once = True
 
     @settings(deadline=500, backend="hypothesis")
     @given(st.integers())
     def test_flaky_slow(i):
-        if once[0]:
-            once[0] = False
+        nonlocal once
+        if once:
+            once = False
             time.sleep(1)
 
     with pytest.raises(FlakyFailure):
@@ -65,7 +72,7 @@ def test_raises_flaky_if_a_test_becomes_fast_on_rerun():
 
 
 def test_deadlines_participate_in_shrinking():
-    @settings(deadline=500, max_examples=1000)
+    @settings(deadline=500, max_examples=1000, database=None)
     @given(st.integers(min_value=0))
     def slow_if_large(i):
         if i >= 1000:
@@ -80,17 +87,18 @@ def test_deadlines_participate_in_shrinking():
 
 def test_keeps_you_well_above_the_deadline():
     seen = set()
-    failed_once = [False]
+    failed_once = False
 
     @settings(deadline=100, backend="hypothesis")
     @given(st.integers(0, 2000))
     def slow(i):
+        nonlocal failed_once
         # Make sure our initial failure isn't something that immediately goes flaky.
-        if not failed_once[0]:
+        if not failed_once:
             if i * 0.9 <= 100:
                 return
             else:
-                failed_once[0] = True
+                failed_once = True
 
         t = i / 1000
         if i in seen:
@@ -104,19 +112,24 @@ def test_keeps_you_well_above_the_deadline():
 
 
 def test_gives_a_deadline_specific_flaky_error_message():
-    once = [True]
+    once = True
 
     @settings(deadline=100, backend="hypothesis")
     @given(st.integers())
     def slow_once(i):
-        if once[0]:
-            once[0] = False
+        nonlocal once
+        if once:
+            once = False
             time.sleep(0.2)
 
     with pytest.raises(FlakyFailure) as err:
         slow_once()
     assert "Unreliable test timing" in "\n".join(err.value.__notes__)
-    assert "took 2" in "\n".join(err.value.__notes__)
+    # this used to be "took 2", but we saw that flake (on pypy, though unsure if
+    # that means anything) with "took 199.59ms". It's possible our gc accounting
+    # is incorrect, or we could just be running into rare non-guarantees of
+    # time.sleep.
+    assert re.search(r"took \d", "\n".join(err.value.__notes__))
 
 
 @pytest.mark.parametrize("slow_strategy", [False, True])

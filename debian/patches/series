@@ -1,4 +1,5 @@
 0001-Remove-reference-to-remote-image-in-docs.patch
-0002-Disable-hoverxref-not-in-Debian.patch
+0002-Disable-Sphinx-extensions-which-are-not-in-Debian.patch
 0003-Avoid-hard-dependency-on-libcst.patch
 0004-Do-not-enforce-minimum-Sphinx-version.patch
+0005-Do-not-fail-on-Redis-deprecation-warning.patch
