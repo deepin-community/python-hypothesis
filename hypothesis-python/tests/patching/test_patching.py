@@ -23,8 +23,9 @@ from hypothesis.extra._patching import (
 )
 from hypothesis.internal.compat import WINDOWS
 
-from .callables import WHERE, Cases, covered, fn
+from .callables import WHERE, Cases, covered, fn, undef_name
 from .toplevel import WHERE_TOP, fn_top
+from tests.common.utils import skipif_threading
 
 SIMPLE = (
     fn,
@@ -52,6 +53,11 @@ COVERING = (
     + "\n"
     + indent('@example(x=0).via("covering example")', prefix="+"),
 )
+UNDEF_NAME = (
+    undef_name,
+    ("undef_name(\n    array=array([100], dtype=int8),\n)", FAIL_MSG),
+    '+@example(array=np.array([100], dtype=np.int8)).via("discovered failure")',
+)
 
 
 def strip_trailing_whitespace(s):
@@ -74,9 +80,9 @@ def test_adds_simple_patch(tst, example, expected):
 
 
 SIMPLE_PATCH_BODY = f'''\
---- {WHERE}
-+++ {WHERE}
-@@ -18,6 +18,7 @@
+--- ./{WHERE}
++++ ./{WHERE}
+@@ -21,6 +21,7 @@
 
 
  @given(st.integers())
@@ -86,9 +92,9 @@ SIMPLE_PATCH_BODY = f'''\
 
 '''
 CASES_PATCH_BODY = f'''\
---- {WHERE}
-+++ {WHERE}
-@@ -25,6 +25,9 @@
+--- ./{WHERE}
++++ ./{WHERE}
+@@ -28,6 +28,9 @@
  class Cases:
      @example(n=0, label="whatever")
      @given(st.integers(), st.text())
@@ -98,8 +104,8 @@ CASES_PATCH_BODY = f'''\
 
 '''
 TOPLEVEL_PATCH_BODY = f'''\
---- {WHERE_TOP}
-+++ {WHERE_TOP}
+--- ./{WHERE_TOP}
++++ ./{WHERE_TOP}
 @@ -19,5 +19,6 @@
 
 
@@ -109,9 +115,9 @@ TOPLEVEL_PATCH_BODY = f'''\
      """A trivial test function."""
 '''
 COVERING_PATCH_BODY = f'''\
---- {WHERE}
-+++ {WHERE}
-@@ -31,7 +31,7 @@
+--- ./{WHERE}
++++ ./{WHERE}
+@@ -34,7 +34,7 @@
 
  @given(st.integers())
  @example(x=2).via("not a literal when repeated " * 2)
@@ -120,6 +126,19 @@ COVERING_PATCH_BODY = f'''\
      """A test function with a removable explicit example."""
 
 '''
+
+UNDEF_NAME_PATCH_BODY = f"""\
+--- ./{WHERE}
++++ ./{WHERE}
+@@ -40,6 +40,7 @@
+
+
+ @given(npst.arrays(np.int8, 1))
+{{0}}
+ def undef_name(array):
+     assert sum(array) < 100
+
+"""
 
 
 @pytest.mark.parametrize(
@@ -131,15 +150,17 @@ COVERING_PATCH_BODY = f'''\
         pytest.param(
             *COVERING, COVERING_PATCH_BODY, ("covering example",), id="covering"
         ),
+        pytest.param(*UNDEF_NAME, UNDEF_NAME_PATCH_BODY, (), id="undef_name"),
     ],
 )
 def test_make_full_patch(tst, example, expected, body, remove):
     when = datetime.now()
     msg = "a message from the test"
-    expected = HEADER.format(when=when, msg=msg) + body.format(expected)
+    author = "the patch author"
+    expected = HEADER.format(when=when, msg=msg, author=author) + body.format(expected)
 
     triple = get_patch_for(tst, [example], strip_via=remove)
-    got = make_patch([triple], when=when, msg=msg)
+    got = make_patch([triple], when=when, msg=msg, author=author)
     stripped = strip_trailing_whitespace(got)
 
     assert stripped.splitlines() == expected.splitlines()
@@ -147,7 +168,7 @@ def test_make_full_patch(tst, example, expected, body, remove):
 
 @pytest.mark.parametrize("n", [0, 1, 2])
 def test_invalid_syntax_cases_dropped(n):
-    tst, (ex, via), expected = SIMPLE
+    tst, (ex, via), _expected = SIMPLE
     example_ls = [(ex.replace("x=1", f"x={x}"), via) for x in range(n)]
     example_ls.insert(-1, ("fn(\n    x=<__main__.Cls object at 0x>,\n)", FAIL_MSG))
 
@@ -167,6 +188,22 @@ def test_no_example_for_data_strategy():
 
     assert get_patch_for(fn, [("fn(data='data(...)')", "msg")]) is not None
     assert get_patch_for(fn, [("fn(Foo(data=data(...)))", "msg")]) is not None
+
+
+def test_patch_order_preserved():
+    (_fname, _before, after) = get_patch_for(
+        fn, [("fn(a=1)", "msg"), ("fn(b=2)", "msg")]
+    )
+    assert after.startswith(
+        '@given(st.integers())\n@example(a=1).via("msg")\n@example(b=2).via("msg")'
+    )
+
+    (_fname, _before, after) = get_patch_for(
+        fn, [("fn(b=2)", "msg"), ("fn(a=1)", "msg")]
+    )
+    assert after.startswith(
+        '@given(st.integers())\n@example(b=2).via("msg")\n@example(a=1).via("msg")'
+    )
 
 
 def test_deduplicates_examples():
@@ -203,6 +240,7 @@ ADDED_LINES = """
 """
 
 
+@skipif_threading
 @pytest.mark.skipif(WINDOWS, reason="backslash support is tricky")
 def test_pytest_reports_patch_file_location(pytester):
     script = pytester.makepyfile(TESTSCRIPT_DUMPS_PATCH)

@@ -8,15 +8,15 @@ Forwarded: not-needed
  1 file changed, 2 deletions(-)
 
 diff --git a/hypothesis-python/docs/community.rst b/hypothesis-python/docs/community.rst
-index c35fe02..c87e758 100644
+index 4c886fd..4daf461 100644
 --- a/hypothesis-python/docs/community.rst
 +++ b/hypothesis-python/docs/community.rst
-@@ -18,8 +18,6 @@ If you would like to cite Hypothesis, please consider :gh-file:`our suggested ci
- If you like repo badges, we suggest the following badge, which you can add
- with reStructuredText or Markdown, respectively:
+@@ -13,8 +13,6 @@ If you would like to cite Hypothesis, please consider :gh-file:`our suggested ci
+ 
+ If you like repo badges, we suggest the following badge, which you can add with Markdown or reStructuredText respectively:
  
 -.. image:: https://img.shields.io/badge/hypothesis-tested-brightgreen.svg
 -
- .. code:: restructuredtext
+ .. code:: md
  
-     .. image:: https://img.shields.io/badge/hypothesis-tested-brightgreen.svg
+     [![Tested with Hypothesis](https://img.shields.io/badge/hypothesis-tested-brightgreen.svg)](https://hypothesis.readthedocs.io/)

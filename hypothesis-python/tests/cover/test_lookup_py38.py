@@ -10,14 +10,13 @@
 
 import dataclasses
 import re
-import sys
 import typing
 from types import SimpleNamespace
 
 import pytest
 
-from hypothesis import example, given, strategies as st
-from hypothesis.errors import InvalidArgument, Unsatisfiable
+from hypothesis import example, given, settings, strategies as st
+from hypothesis.errors import InvalidArgument
 from hypothesis.internal.reflection import (
     convert_positional_arguments,
     get_pretty_function_description,
@@ -83,15 +82,6 @@ def test_typeddict_with_optional(value):
         assert isinstance(value["b"], bool)
 
 
-if sys.version_info[:2] < (3, 9):
-    xfail_on_38 = pytest.mark.xfail(raises=Unsatisfiable)
-else:
-
-    def xfail_on_38(f):
-        return f
-
-
-@xfail_on_38
 def test_simple_optional_key_is_optional():
     # Optional keys are not currently supported, as PEP-589 leaves no traces
     # at runtime.  See https://github.com/python/cpython/pull/17214
@@ -124,7 +114,6 @@ def test_typeddict_with_nested_value(value):
     assert isinstance(value["inner"]["a"], int)
 
 
-@xfail_on_38
 def test_layered_optional_key_is_optional():
     # Optional keys are not currently supported, as PEP-589 leaves no traces
     # at runtime.  See https://github.com/python/cpython/pull/17214
@@ -137,6 +126,10 @@ class Node:
     right: typing.Union["Node", int]
 
 
+@pytest.mark.skipif(
+    settings.get_current_profile_name() == "crosshair",
+    reason="takes ~11 mins; datastructure explosion: https://github.com/pschanely/hypothesis-crosshair/issues/27",
+)
 @given(st.builds(Node))
 def test_can_resolve_recursive_dataclass(val):
     assert isinstance(val, Node)
@@ -207,6 +200,14 @@ def has_posonly_args(x, /, y):
     pass
 
 
+@pytest.mark.xfail(
+    settings.get_current_profile_name() == "threading",
+    reason=(
+        "dynamic @example applications modify the shared "
+        "has_posonly_args.hypothesis._given_kwargs."
+    ),
+    strict=False,
+)
 def test_example_argument_validation():
     example(y=None)(has_posonly_args)(1)  # Basic case is OK
 

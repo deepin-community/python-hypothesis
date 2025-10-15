@@ -9,12 +9,11 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import collections
-from typing import Callable, DefaultDict, Dict, List, NewType, Type, Union
+from typing import Annotated, Callable, DefaultDict, NewType, Union
 
 import pytest
 import typing_extensions
 from typing_extensions import (
-    Annotated,
     Concatenate,
     LiteralString,
     NotRequired,
@@ -37,6 +36,9 @@ from tests.common.debug import (
     check_can_generate_examples,
     find_any,
 )
+
+# we'll continue testing the typing variants until their removal from the stdlib
+# ruff: noqa: UP035, UP006
 
 # See also nocover/test_type_lookup.py
 
@@ -78,10 +80,10 @@ def test_simple_typeddict(value):
 
 
 def test_typing_extensions_Type_int():
-    assert_simple_property(from_type(Type[int]), lambda v: v is int)
+    assert_simple_property(from_type(type[int]), lambda v: v is int)
 
 
-@given(from_type(Union[Type[str], Type[list]]))
+@given(from_type(Union[type[str], type[list]]))
 def test_typing_extensions_Type_Union(ex):
     assert ex in (str, list)
 
@@ -97,62 +99,12 @@ def test_resolves_NewType():
     find_any(from_type(uni), lambda x: isinstance(x, type(None)))
 
 
-@given(from_type(DefaultDict[int, int]))
+@given(from_type(DefaultDict[int, int]) | from_type(collections.defaultdict[int, int]))
 def test_defaultdict(ex):
     assert isinstance(ex, collections.defaultdict)
     assume(ex)
     assert all(isinstance(elem, int) for elem in ex)
     assert all(isinstance(elem, int) for elem in ex.values())
-
-
-@pytest.mark.parametrize(
-    "annotated_type,expected_strategy_repr",
-    [
-        (Annotated[int, "foo"], "integers()"),
-        (Annotated[List[float], "foo"], "lists(floats())"),
-        (Annotated[Annotated[str, "foo"], "bar"], "text()"),
-        (
-            Annotated[Annotated[List[Dict[str, bool]], "foo"], "bar"],
-            "lists(dictionaries(keys=text(), values=booleans()))",
-        ),
-    ],
-)
-def test_typing_extensions_Annotated(annotated_type, expected_strategy_repr):
-    assert repr(st.from_type(annotated_type)) == expected_strategy_repr
-
-
-PositiveInt = Annotated[int, st.integers(min_value=1)]
-MoreThenTenInt = Annotated[PositiveInt, st.integers(min_value=10 + 1)]
-WithTwoStrategies = Annotated[int, st.integers(), st.none()]
-ExtraAnnotationNoStrategy = Annotated[PositiveInt, "metadata"]
-
-
-def arg_positive(x: PositiveInt):
-    assert x > 0
-
-
-def arg_more_than_ten(x: MoreThenTenInt):
-    assert x > 10
-
-
-@given(st.data())
-def test_annotated_positive_int(data):
-    data.draw(st.builds(arg_positive))
-
-
-@given(st.data())
-def test_annotated_more_than_ten(data):
-    data.draw(st.builds(arg_more_than_ten))
-
-
-@given(st.data())
-def test_annotated_with_two_strategies(data):
-    assert data.draw(st.from_type(WithTwoStrategies)) is None
-
-
-@given(st.data())
-def test_annotated_extra_metadata(data):
-    assert data.draw(st.from_type(ExtraAnnotationNoStrategy)) > 0
 
 
 @pytest.mark.parametrize("non_runtime_type", NON_RUNTIME_TYPES)

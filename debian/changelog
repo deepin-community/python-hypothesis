@@ -1,3 +1,119 @@
+python-hypothesis (6.140.2-1) unstable; urgency=medium
+
+  * New upstream version 6.140.2
+
+ -- Timo Röhling <roehling@debian.org>  Sat, 27 Sep 2025 20:34:34 +0200
+
+python-hypothesis (6.139.2-1) unstable; urgency=medium
+
+  * Migrate debian/watch to version 5 format
+  * New upstream version 6.139.2
+
+ -- Timo Röhling <roehling@debian.org>  Thu, 18 Sep 2025 22:36:03 +0200
+
+python-hypothesis (6.138.14-1) unstable; urgency=medium
+
+  * New upstream version 6.138.14
+
+ -- Timo Röhling <roehling@debian.org>  Thu, 04 Sep 2025 18:05:03 +0200
+
+python-hypothesis (6.138.0-1) unstable; urgency=medium
+
+  * New upstream version 6.138.0
+  * Update patches
+  * Migrate to PEP 517 build
+  * Do not fail on Redis deprecation warning
+
+ -- Timo Röhling <roehling@debian.org>  Wed, 13 Aug 2025 15:17:10 +0200
+
+python-hypothesis (6.130.5-2) unstable; urgency=medium
+
+  * Team upload.
+  * Add ignore-warnings-in-the-testsuite-alone.patch (Closes: #1106438).
+
+ -- Thomas Goirand <zigo@debian.org>  Fri, 30 May 2025 10:06:04 +0200
+
+python-hypothesis (6.130.5-1) unstable; urgency=medium
+
+  * New upstream version 6.130.5
+  * Refresh patches (no functional changes)
+  * Use furo theme for documentation
+  * Skip crosshair tests
+
+ -- Timo Röhling <roehling@debian.org>  Sat, 05 Apr 2025 00:52:20 +0200
+
+python-hypothesis (6.127.4-1) unstable; urgency=medium
+
+  * New upstream version 6.127.4
+  * Bump Standards-Version to 4.7.2
+  * New test dependency python3-watchdog
+  * README.rst is README.md now
+
+ -- Timo Röhling <roehling@debian.org>  Sun, 02 Mar 2025 21:33:08 +0100
+
+python-hypothesis (6.125.2-1) unstable; urgency=medium
+
+  * New upstream version 6.125.2
+
+ -- Timo Röhling <roehling@debian.org>  Sat, 08 Feb 2025 00:06:40 +0100
+
+python-hypothesis (6.124.0-1) unstable; urgency=medium
+
+  * New upstream version 6.124.0
+  * Refresh patches (no functional changes)
+  * Wrap and sort Debian package files
+
+ -- Timo Röhling <roehling@debian.org>  Thu, 16 Jan 2025 13:31:20 +0100
+
+python-hypothesis (6.122.1-1) unstable; urgency=medium
+
+  * New upstream version 6.122.1
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 02 Dec 2024 07:57:45 +0100
+
+python-hypothesis (6.121.0-1) unstable; urgency=medium
+
+  * New upstream version 6.121.0
+
+ -- Timo Röhling <roehling@debian.org>  Thu, 28 Nov 2024 10:18:21 +0100
+
+python-hypothesis (6.119.3-1) unstable; urgency=medium
+
+  * New upstream version 6.119.3
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 18 Nov 2024 10:29:05 +0100
+
+python-hypothesis (6.116.0-1) unstable; urgency=medium
+
+  * New upstream version 6.116.0
+  * Refresh patches (no functional changes)
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 04 Nov 2024 09:23:37 +0100
+
+python-hypothesis (6.115.3-1) unstable; urgency=medium
+
+  * New upstream version 6.115.3
+
+ -- Timo Röhling <roehling@debian.org>  Fri, 18 Oct 2024 16:58:02 +0200
+
+python-hypothesis (6.115.0-1) unstable; urgency=medium
+
+  * New upstream version 6.115.0
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 14 Oct 2024 20:18:13 +0200
+
+python-hypothesis (6.112.1-1) unstable; urgency=medium
+
+  * New upstream version 6.112.1
+
+ -- Timo Röhling <roehling@debian.org>  Sat, 28 Sep 2024 15:18:43 +0200
+
+python-hypothesis (6.112.0-1) unstable; urgency=medium
+
+  * New upstream version 6.112.0
+
+ -- Timo Röhling <roehling@debian.org>  Tue, 10 Sep 2024 11:33:21 +0200
+
 python-hypothesis (6.111.2-1) unstable; urgency=medium
 
   * New upstream version 6.111.2

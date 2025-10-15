@@ -8,9 +8,11 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import pytest
+
 from hypothesis import assume, core, find, given, settings, strategies as st
 from hypothesis.database import (
-    ExampleDatabase,
+    DirectoryBasedExampleDatabase,
     GitHubArtifactDatabase,
     InMemoryExampleDatabase,
     ReadOnlyDatabase,
@@ -18,7 +20,13 @@ from hypothesis.database import (
 from hypothesis.errors import NoSuchExample, Unsatisfiable
 from hypothesis.internal.entropy import deterministic_PRNG
 
-from tests.common.utils import all_values, non_covering_examples
+from tests.common.utils import (
+    Why,
+    all_values,
+    non_covering_examples,
+    skipif_threading,
+    xfail_on_crosshair,
+)
 
 
 def has_a_non_zero_byte(x):
@@ -37,6 +45,7 @@ def test_saves_incremental_steps_in_database():
     assert len(all_values(database)) > 1
 
 
+@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
 def test_clears_out_database_as_things_get_boring():
     key = b"a database key"
     database = InMemoryExampleDatabase()
@@ -69,6 +78,7 @@ def test_clears_out_database_as_things_get_boring():
         raise AssertionError
 
 
+@xfail_on_crosshair(Why.other, strict=False)
 def test_trashes_invalid_examples():
     key = b"a database key"
     database = InMemoryExampleDatabase()
@@ -100,18 +110,22 @@ def test_trashes_invalid_examples():
     invalid.add(value)
     with deterministic_PRNG():
         stuff()
-
     assert len(all_values(database)) < original
 
 
+@pytest.mark.skipif(
+    settings.get_current_profile_name() == "crosshair",
+    reason="condition is easy for crosshair, stops early",
+)
 def test_respects_max_examples_in_database_usage():
     key = b"a database key"
     database = InMemoryExampleDatabase()
     do_we_care = True
-    counter = [0]
+    counter = 0
 
     def check(x):
-        counter[0] += 1
+        nonlocal counter
+        counter += 1
         return do_we_care and has_a_non_zero_byte(x)
 
     def stuff():
@@ -129,9 +143,10 @@ def test_respects_max_examples_in_database_usage():
         stuff()
     assert len(all_values(database)) > 10
     do_we_care = False
-    counter[0] = 0
-    stuff()
-    assert counter == [10]
+    counter = 0
+    with deterministic_PRNG():
+        stuff()
+    assert counter == 10
 
 
 def test_does_not_use_database_when_seed_is_forced(monkeypatch):
@@ -147,11 +162,12 @@ def test_does_not_use_database_when_seed_is_forced(monkeypatch):
     test()
 
 
+@skipif_threading  # pytest .mktemp is not thread safe
 @given(st.binary(), st.binary())
 def test_database_not_created_when_not_used(tmp_path_factory, key, value):
     path = tmp_path_factory.mktemp("hypothesis") / "examples"
     assert not path.exists()
-    database = ExampleDatabase(path)
+    database = DirectoryBasedExampleDatabase(path)
     assert not list(database.fetch(key))
     assert not path.exists()
     database.save(key, value)
@@ -159,6 +175,7 @@ def test_database_not_created_when_not_used(tmp_path_factory, key, value):
     assert list(database.fetch(key)) == [value]
 
 
+@skipif_threading
 def test_ga_database_not_created_when_not_used(tmp_path_factory):
     path = tmp_path_factory.mktemp("hypothesis") / "github-actions"
     assert not path.exists()

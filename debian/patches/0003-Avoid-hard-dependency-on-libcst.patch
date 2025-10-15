@@ -8,10 +8,10 @@ Forwarded: not-needed
  1 file changed, 7 insertions(+), 4 deletions(-)
 
 diff --git a/hypothesis-python/docs/conf.py b/hypothesis-python/docs/conf.py
-index 5a807fd..dc938dc 100644
+index 40d93b1..da8a77a 100644
 --- a/hypothesis-python/docs/conf.py
 +++ b/hypothesis-python/docs/conf.py
-@@ -60,12 +60,15 @@ def setup(app):
+@@ -108,12 +108,15 @@ def setup(app):
          app.tags.add("has_release_file")
  
      # Workaround for partial-initialization problem when autodoc imports libcst

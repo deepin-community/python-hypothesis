@@ -26,7 +26,7 @@ from hypothesis import (
 from hypothesis.errors import InvalidArgument
 from hypothesis.internal.cache import GenericCache, LRUCache, LRUReusedCache
 
-from tests.common.utils import skipif_emscripten
+from tests.common.utils import Why, skipif_emscripten, xfail_on_crosshair
 
 
 class LRUCacheAlternative(GenericCache):
@@ -116,9 +116,10 @@ def test_behaves_like_a_dict_with_losses(implementation, writes, size):
         assert len(target) <= min(len(model), size)
 
 
+@xfail_on_crosshair(Why.symbolic_outside_context)
 @settings(
     suppress_health_check={HealthCheck.too_slow}
-    | set(settings.get_profile(settings._current_profile).suppress_health_check),
+    | set(settings().suppress_health_check),
     deadline=None,
 )
 @given(write_pattern(min_distinct_keys=2), st.data())
@@ -137,11 +138,12 @@ def test_always_evicts_the_lowest_scoring_value(writes, data):
         scores[key] = data.draw(st.integers(0, 1000), label=f"scores[{key!r}]")
         return scores[key]
 
-    last_entry = [None]
+    last_entry = None
 
     class Cache(GenericCache):
         def new_entry(self, key, value):
-            last_entry[0] = key
+            nonlocal last_entry
+            last_entry = key
             evicted.discard(key)
             assert key not in scores
             return new_score(key)
@@ -155,7 +157,7 @@ def test_always_evicts_the_lowest_scoring_value(writes, data):
             assert score == scores[key]
             del scores[key]
             if len(scores) > 1:
-                assert score <= min(v for k, v in scores.items() if k != last_entry[0])
+                assert score <= min(v for k, v in scores.items() if k != last_entry)
             evicted.add(key)
 
     target = Cache(max_size=size)

@@ -9,14 +9,18 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import datetime
+import os
 import subprocess
 import sys
+from contextlib import contextmanager
+from threading import RLock
 from unittest import TestCase
 
 import pytest
 
 from hypothesis import example, given, strategies as st
 from hypothesis._settings import (
+    _CI_VARS,
     HealthCheck,
     Phase,
     Verbosity,
@@ -25,11 +29,10 @@ from hypothesis._settings import (
     note_deprecation,
     settings,
 )
-from hypothesis.database import ExampleDatabase
+from hypothesis.database import InMemoryExampleDatabase
 from hypothesis.errors import (
     HypothesisDeprecationWarning,
     InvalidArgument,
-    InvalidState,
 )
 from hypothesis.stateful import RuleBasedStateMachine, rule
 from hypothesis.utils.conventions import not_set
@@ -39,21 +42,37 @@ from tests.common.utils import (
     counts_calls,
     fails_with,
     skipif_emscripten,
+    skipif_threading,
     validate_deprecation,
 )
 
-
-def test_has_docstrings():
-    assert settings.verbosity.__doc__
-
-
 original_default = settings.get_profile("default").max_examples
+_temp_register_profile_lock = RLock()
 
 
-def setup_function(fn):
-    settings.load_profile("default")
-    settings.register_profile("test_settings", settings())
-    settings.load_profile("test_settings")
+@contextmanager
+def temp_register_profile(name, parent, **kwargs):
+    with _temp_register_profile_lock:
+        try:
+            settings.register_profile(name, parent, **kwargs)
+            yield
+        finally:
+            settings._profiles.pop(name)
+
+
+_restore_profile_lock = RLock()
+
+
+@contextmanager
+def restore_profile():
+    with _restore_profile_lock:
+        # avoid polluting global state by resetting the loaded profile back to its
+        # previous value in tests which use load_profile
+        current_profile = settings.get_current_profile_name()
+        try:
+            yield
+        finally:
+            settings.load_profile(current_profile)
 
 
 def test_cannot_set_non_settings():
@@ -79,7 +98,7 @@ def test_respects_none_database():
 def test_can_repeatedly_push_the_same_thing():
     s = settings(max_examples=12)
     t = settings(max_examples=17)
-    assert settings().max_examples == original_default
+    original = settings().max_examples
     with local_settings(s):
         assert settings().max_examples == 12
         with local_settings(t):
@@ -91,7 +110,7 @@ def test_can_repeatedly_push_the_same_thing():
                 assert settings().max_examples == 12
             assert settings().max_examples == 17
         assert settings().max_examples == 12
-    assert settings().max_examples == original_default
+    assert settings().max_examples == original
 
 
 def test_can_set_verbosity():
@@ -106,17 +125,18 @@ def test_can_not_set_verbosity_to_non_verbosity():
         settings(verbosity="kittens")
 
 
-@pytest.mark.parametrize("db", [None, ExampleDatabase()])
+@pytest.mark.parametrize("db", [None, InMemoryExampleDatabase()])
 def test_inherits_an_empty_database(db):
-    assert settings.default.database is not None
-    s = settings(database=db)
-    assert s.database is db
-    with local_settings(s):
-        t = settings()
-    assert t.database is db
+    with local_settings(settings(database=InMemoryExampleDatabase())):
+        assert settings.default.database is not None
+        s = settings(database=db)
+        assert s.database is db
+        with local_settings(s):
+            t = settings()
+        assert t.database is db
 
 
-@pytest.mark.parametrize("db", [None, ExampleDatabase()])
+@pytest.mark.parametrize("db", [None, InMemoryExampleDatabase()])
 def test_can_assign_database(db):
     x = settings(database=db)
     assert x.database is db
@@ -129,20 +149,23 @@ def test_will_reload_profile_when_default_is_absent():
 
 
 def test_load_profile():
-    settings.load_profile("default")
-    assert settings.default.max_examples == original_default
-    assert settings.default.stateful_step_count == 50
+    with restore_profile():
+        settings.load_profile("default")
+        assert settings.default.max_examples == original_default
+        assert settings.default.stateful_step_count == 50
 
-    settings.register_profile("test", settings(max_examples=10), stateful_step_count=5)
-    settings.load_profile("test")
+        settings.register_profile(
+            "test", settings(max_examples=10), stateful_step_count=5
+        )
+        settings.load_profile("test")
 
-    assert settings.default.max_examples == 10
-    assert settings.default.stateful_step_count == 5
+        assert settings.default.max_examples == 10
+        assert settings.default.stateful_step_count == 5
 
-    settings.load_profile("default")
+        settings.load_profile("default")
 
-    assert settings.default.max_examples == original_default
-    assert settings.default.stateful_step_count == 50
+        assert settings.default.max_examples == original_default
+        assert settings.default.stateful_step_count == 50
 
 
 def test_profile_names_must_be_strings():
@@ -155,28 +178,18 @@ def test_profile_names_must_be_strings():
 
 
 def test_loading_profile_keeps_expected_behaviour():
-    settings.register_profile("ci", settings(max_examples=10000))
-    settings.load_profile("ci")
-    assert settings().max_examples == 10000
-    with local_settings(settings(max_examples=5)):
-        assert settings().max_examples == 5
-    assert settings().max_examples == 10000
+    with restore_profile():
+        settings.register_profile("ci", settings(max_examples=10000))
+        settings.load_profile("ci")
+        assert settings().max_examples == 10000
+        with local_settings(settings(max_examples=5)):
+            assert settings().max_examples == 5
+        assert settings().max_examples == 10000
 
 
 def test_load_non_existent_profile():
     with pytest.raises(InvalidArgument):
         settings.get_profile("nonsense")
-
-
-def test_cannot_delete_a_setting():
-    x = settings()
-    with pytest.raises(AttributeError):
-        del x.max_examples
-    x.max_examples
-
-    x = settings()
-    with pytest.raises(AttributeError):
-        del x.foo
 
 
 def test_cannot_set_settings():
@@ -193,7 +206,7 @@ def test_can_have_none_database():
     assert settings(database=None).database is None
 
 
-@pytest.mark.parametrize("db", [None, ExampleDatabase(":memory:")])
+@pytest.mark.parametrize("db", [None, InMemoryExampleDatabase()])
 @pytest.mark.parametrize("bad_db", [":memory:", ".hypothesis/examples"])
 def test_database_type_must_be_ExampleDatabase(db, bad_db):
     with local_settings(settings(database=db)):
@@ -201,11 +214,6 @@ def test_database_type_must_be_ExampleDatabase(db, bad_db):
         with pytest.raises(InvalidArgument):
             settings(database=bad_db)
         assert settings.database is settings_property_db
-
-
-def test_cannot_define_settings_once_locked():
-    with pytest.raises(InvalidState):
-        settings._define_setting("hi", "there", default=4)
 
 
 def test_cannot_assign_default():
@@ -230,6 +238,9 @@ def test_settings_alone():
 """
 
 
+# runpytest_inprocess uses invalidate_caches in pytest, which is not thread safe
+# (I presume; produces keyerrors).
+@skipif_threading
 def test_settings_alone(pytester):
     # Disable cacheprovider, since we don't need it and it's flaky on pyodide
     script = pytester.makepyfile(TEST_SETTINGS_ALONE)
@@ -273,6 +284,7 @@ from hypothesis import settings
 from hypothesis.configuration import set_hypothesis_home_dir
 from hypothesis.database import DirectoryBasedExampleDatabase
 
+settings.load_profile("default")
 settings.default.database
 
 if __name__ == '__main__':
@@ -280,8 +292,7 @@ if __name__ == '__main__':
     set_hypothesis_home_dir(new_home)
     db = settings.default.database
     assert isinstance(db, DirectoryBasedExampleDatabase), db
-    # TODO: use .is_relative_to() when we drop Python 3.8
-    assert str(db.path).startswith(new_home), (db.path, new_home)
+    assert db.path.is_relative_to(new_home), (db.path, new_home)
 """
 
 
@@ -324,6 +335,8 @@ class TestGivenExampleSettingsExplicitCalled(TestCase):
     @given(st.booleans())
     @example(True)
     @settings(phases=[Phase.explicit])
+    # counts_calls is not thread safe (modifying global f.calls attr)
+    @skipif_threading
     def test_example_explicit(self, x):
         self.call_target()
 
@@ -442,7 +455,7 @@ def test_assigning_to_settings_attribute_on_state_machine_raises_error():
 
 def test_derandomise_with_explicit_database_is_invalid():
     with pytest.raises(InvalidArgument):
-        settings(derandomize=True, database=ExampleDatabase(":memory:"))
+        settings(derandomize=True, database=InMemoryExampleDatabase())
 
 
 @pytest.mark.parametrize(
@@ -477,8 +490,12 @@ def test_invalid_parent():
     assert "parent=(not settings repr)" in str(excinfo.value)
 
 
+def test_default_settings_do_not_use_ci():
+    assert settings.get_profile("default").suppress_health_check == ()
+
+
 def test_show_changed():
-    s = settings(max_examples=999, database=None)
+    s = settings(settings.get_profile("default"), max_examples=999, database=None)
     assert s.show_changed() == "database=None, max_examples=999"
 
 
@@ -512,3 +529,85 @@ def test_deprecated_settings_not_in_settings_all_list():
     assert al == ls
     assert HealthCheck.return_value not in ls
     assert HealthCheck.not_a_test_method not in ls
+
+
+@skipif_emscripten
+def test_check_defaults_to_derandomize_when_running_on_ci():
+    env = dict(os.environ)
+    env["CI"] = "true"
+
+    assert (
+        subprocess.check_output(
+            [
+                sys.executable,
+                "-c",
+                "from hypothesis import settings\nprint(settings().derandomize)",
+            ],
+            env=env,
+            text=True,
+            encoding="utf-8",
+        ).strip()
+        == "True"
+    )
+
+
+@skipif_emscripten
+def test_check_defaults_to_randomize_when_not_running_on_ci():
+    env = dict(os.environ)
+    for key in _CI_VARS:
+        env.pop(key, None)
+
+    assert (
+        subprocess.check_output(
+            [
+                sys.executable,
+                "-c",
+                "from hypothesis import settings\nprint(settings().derandomize)",
+            ],
+            env=env,
+            text=True,
+            encoding="utf-8",
+        ).strip()
+        == "False"
+    )
+
+
+@skipif_threading  # modifying global state (profiles) during testing
+def test_reloads_the_loaded_profile_if_registered_again():
+    with restore_profile():
+        test_profile = "some nonsense profile purely for this test"
+        test_value = 123456
+        settings.register_profile(test_profile, settings(max_examples=test_value))
+        settings.load_profile(test_profile)
+        assert settings.default.max_examples == test_value
+        test_value_2 = 42
+        settings.register_profile(test_profile, settings(max_examples=test_value_2))
+        assert settings.default.max_examples == test_value_2
+
+
+CI_TESTING_SCRIPT = """
+from hypothesis import settings
+
+if __name__ == '__main__':
+    settings.register_profile("ci", settings(max_examples=42))
+    assert settings.default.max_examples == 42
+"""
+
+
+@skipif_emscripten
+def test_will_automatically_pick_up_changes_to_ci_profile_in_ci():
+    env = dict(os.environ)
+    env["CI"] = "true"
+    subprocess.check_call(
+        [sys.executable, "-c", CI_TESTING_SCRIPT],
+        env=env,
+        text=True,
+        encoding="utf-8",
+    )
+
+
+def test_register_profile_avoids_intermediate_profiles():
+    parent = settings()
+    s = settings(parent, max_examples=10)
+    with temp_register_profile("for_intermediate_test", s):
+        assert settings.get_profile("for_intermediate_test")._fallback is parent

@@ -13,23 +13,29 @@ import re
 import pytest
 
 from hypothesis import Verbosity, given, settings, strategies as st
+from hypothesis.database import InMemoryExampleDatabase
 
 from tests.common.utils import capture_out
 
 
 def test_reports_passes():
     @given(st.integers())
-    @settings(verbosity=Verbosity.debug, max_examples=1000)
+    @settings(
+        verbosity=Verbosity.debug, max_examples=1000, database=InMemoryExampleDatabase()
+    )
     def test(i):
         assert i < 10
 
     with capture_out() as out:
+        # NOTE: For compatibility with Python 3.9's LL(1)
+        # parser, this is written as a nested with-statement,
+        # instead of a compound one.
         with pytest.raises(AssertionError):
             test()
 
     value = out.getvalue()
 
-    assert "minimize_individual_nodes" in value
+    assert "minimize_individual_choices" in value
     assert "calls" in value
     assert "shrinks" in value
 

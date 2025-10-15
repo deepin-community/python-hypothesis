@@ -12,7 +12,6 @@ from collections import Counter
 
 import pytest
 
-from hypothesis.internal.compat import int_from_bytes
 from hypothesis.internal.conjecture.shrinking import (
     Bytes,
     Collection,
@@ -73,20 +72,26 @@ def test_can_sort_bytes_by_reordering_partially_not_cross_stationary_element():
     ],
 )
 def test_shrink_strings(initial, predicate, intervals, expected):
-    assert String.shrink(initial, predicate, intervals=intervals) == tuple(expected)
+    assert String.shrink(
+        initial, predicate, intervals=intervals, min_size=len(expected)
+    ) == tuple(expected)
 
 
 @pytest.mark.parametrize(
     "initial, predicate, expected",
     [
-        (b"\x18\x12", lambda v: True, b"\x00\x00"),
-        (b"\x01\x10", lambda v: v[0] == 1, b"\x01\x00"),
+        (b"\x18\x12", lambda v: len(v) == 2, b"\x00\x00"),
+        (b"\x18\x12", lambda v: True, b""),
+        (b"\x01\x10", lambda v: len(v) > 0 and v[0] == 1, b"\x01"),
+        (b"\x01\x10\x01\x92", lambda v: sum(v) >= 9, b"\x09"),
     ],
 )
 def test_shrink_bytes(initial, predicate, expected):
-    assert Bytes.shrink(initial, predicate) == int_from_bytes(expected)
+    assert bytes(Bytes.shrink(initial, predicate, min_size=len(expected))) == expected
 
 
 def test_collection_left_is_better():
-    shrinker = Collection([1, 2, 3], lambda v: True, ElementShrinker=Integer)
+    shrinker = Collection(
+        [1, 2, 3], lambda v: True, ElementShrinker=Integer, min_size=3
+    )
     assert not shrinker.left_is_better([1, 2, 3], [1, 2, 3])
